@@ -1,7 +1,8 @@
 """RideMate API — Flask application factory and entry point.
 
-Boot order: config -> logging -> Redis -> CORS -> error handlers -> blueprints
--> MongoDB -> routes -> frontend serving.
+Boot order:
+config -> logging -> Redis -> CORS -> error handlers -> blueprints
+-> MongoDB -> routes.
 """
 
 import logging
@@ -10,15 +11,7 @@ import re
 import time
 import uuid
 
-from flask import (
-    Flask,
-    Response,
-    g,
-    jsonify,
-    request,
-    send_file,
-    send_from_directory,
-)
+from flask import Flask, Response, g, jsonify, request, send_file
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -27,7 +20,21 @@ from .config import Config, validate_runtime
 from .errors import register_error_handlers
 from . import db, payments, storage
 
+
 APP_VERSION = "2.1.0"
+
+
+# ---------------------------------------------------------------------------
+# Content Security Policy
+#
+# The frontend uses:
+#   - Google Identity Services
+#   - Leaflet from unpkg
+#   - Google Fonts
+#   - browser-side API calls
+#
+# Keep the policy explicit instead of using a completely open CSP.
+# ---------------------------------------------------------------------------
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -35,21 +42,73 @@ _SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(self)",
     "Cross-Origin-Opener-Policy": "same-origin",
+
+    # Required for the current frontend.
+    #
+    # unsafe-inline is currently required because index.html contains
+    # a small inline configuration script.
+    #
+    # Once that inline script is moved to an external JS file, remove
+    # 'unsafe-inline' from script-src.
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "base-uri 'self'; "
-        "frame-ancestors 'none'; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com; "
-        "script-src 'self' https://unpkg.com; "
+
+        # Application JS + Google Sign-In + Leaflet
+        "script-src 'self' 'unsafe-inline' "
+        "https://unpkg.com "
+        "https://accounts.google.com; "
+
+        # Explicit script element policy
+        "script-src-elem 'self' 'unsafe-inline' "
+        "https://unpkg.com "
+        "https://accounts.google.com; "
+
+        # Application styles + Google Fonts + Leaflet CSS
+        "style-src 'self' 'unsafe-inline' "
+        "https://fonts.googleapis.com "
+        "https://unpkg.com; "
+
+        # Fonts
+        "font-src 'self' data: "
+        "https://fonts.gstatic.com; "
+
+        # Images / avatars / Leaflet assets
         "img-src 'self' data: blob: https:; "
-        "connect-src 'self' https: http://localhost:*; "
-        "object-src 'none'"
+
+        # API/network requests
+        "connect-src 'self' "
+        "https://accounts.google.com "
+        "https://*.googleapis.com; "
+
+        # Google Sign-In may use an iframe
+        "frame-src 'self' "
+        "https://accounts.google.com; "
+
+        # Leaflet may use workers/blob URLs
+        "worker-src 'self' blob:; "
+
+        # Do not allow plugins
+        "object-src 'none'; "
+
+        # Do not allow arbitrary framing
+        "frame-ancestors 'none'; "
+
+        # Forms should only submit to this application
+        "form-action 'self' "
+        "https://accounts.google.com; "
+
+        # Upgrade insecure resource requests
+        "upgrade-insecure-requests"
     ),
 }
 
+
 _ID_RE = re.compile(r"[^0-9A-Za-z:_-]")
 
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 
 def _configure_logging(app):
     level = getattr(
@@ -59,6 +118,7 @@ def _configure_logging(app):
     )
 
     handler = logging.StreamHandler()
+
     handler.setFormatter(
         logging.Formatter(
             "%(asctime)s %(levelname)s %(name)s %(message)s"
@@ -73,11 +133,18 @@ def _configure_logging(app):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
+# ---------------------------------------------------------------------------
+# Redis
+# ---------------------------------------------------------------------------
+
 def _init_redis(app):
     url = app.config.get("REDIS_URL", "")
 
     if not url:
         app.extensions["rm_redis"] = None
+        app.logger.info(
+            "Redis not configured; using in-memory fallback."
+        )
         return
 
     try:
@@ -86,7 +153,9 @@ def _init_redis(app):
         client = redis.Redis.from_url(
             url,
             socket_connect_timeout=2,
+            socket_timeout=2,
             retry_on_timeout=False,
+            decode_responses=True,
         )
 
         client.ping()
@@ -97,7 +166,7 @@ def _init_redis(app):
             "Redis connected (realtime + rate limiting active)."
         )
 
-    except Exception:  # noqa: BLE001
+    except Exception:
         app.extensions["rm_redis"] = None
 
         app.logger.warning(
@@ -105,41 +174,28 @@ def _init_redis(app):
         )
 
 
+# ---------------------------------------------------------------------------
+# Application factory
+# ---------------------------------------------------------------------------
+
 def create_app(config_object=Config):
     app = Flask(__name__)
+
+    # Load configuration.
     app.config.from_object(config_object)
 
-    # ---------------------------------------------------------
-    # Frontend directory
-    #
-    # Docker structure:
-    #
-    # /app/
-    #   backend/
-    #   frontend/
-    #
-    # Since Flask's root_path is /app/backend,
-    # ../frontend resolves to /app/frontend.
-    # ---------------------------------------------------------
-
-    frontend_dir = os.path.abspath(
-        os.path.join(app.root_path, "..", "frontend")
-    )
-
-    app.logger.info(
-        "Frontend directory configured as: %s",
-        frontend_dir,
-    )
-
-    # Fail fast on insecure production/staging configuration
-    # BEFORE serving requests.
-    validate_runtime(app.config)
-
+    # Always initialise the extension key.
     app.extensions["rm_redis"] = None
 
-    # ---------------------------------------------------------
-    # Proxy configuration
-    # ---------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Production configuration validation
+    # -----------------------------------------------------------------------
+
+    validate_runtime(app.config)
+
+    # -----------------------------------------------------------------------
+    # Render / reverse proxy support
+    # -----------------------------------------------------------------------
 
     proxy_count = app.config.get("TRUSTED_PROXY_COUNT", 0)
 
@@ -152,39 +208,51 @@ def create_app(config_object=Config):
             x_port=1,
         )
 
-    # ---------------------------------------------------------
-    # Logging / Redis
-    # ---------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Logging
+    # -----------------------------------------------------------------------
 
     _configure_logging(app)
+
+    # -----------------------------------------------------------------------
+    # Redis
+    # -----------------------------------------------------------------------
+
     _init_redis(app)
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------------------------
     # CORS
-    # ---------------------------------------------------------
+    # -----------------------------------------------------------------------
+
+    frontend_origins = app.config.get(
+        "FRONTEND_ORIGINS",
+        [],
+    )
 
     CORS(
         app,
         resources={
             r"/api/*": {
-                "origins": app.config["FRONTEND_ORIGINS"]
+                "origins": frontend_origins
             }
         },
         supports_credentials=bool(
-            app.config["ALLOW_CREDENTIALS"]
+            app.config.get("ALLOW_CREDENTIALS", False)
         ),
-        expose_headers=["X-Request-Id"],
+        expose_headers=[
+            "X-Request-Id"
+        ],
     )
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------------------------
     # Error handlers
-    # ---------------------------------------------------------
+    # -----------------------------------------------------------------------
 
     register_error_handlers(app)
 
-    # ---------------------------------------------------------
-    # Middleware
-    # ---------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Request ID middleware
+    # -----------------------------------------------------------------------
 
     @app.before_request
     def _assign_request_id():
@@ -195,14 +263,25 @@ def create_app(config_object=Config):
             or uuid.uuid4().hex
         )
 
-        # Sanitize client-supplied IDs.
-        rid = _ID_RE.sub("", proposed)[:64] or uuid.uuid4().hex
+        # Sanitise client-supplied IDs so logs cannot be polluted.
+        rid = _ID_RE.sub("", proposed)[:64]
+
+        if not rid:
+            rid = uuid.uuid4().hex
 
         g.request_id = rid
+
+    # -----------------------------------------------------------------------
+    # Request timer
+    # -----------------------------------------------------------------------
 
     @app.before_request
     def _timer():
         g._t = time.time()
+
+    # -----------------------------------------------------------------------
+    # Security headers + request logging
+    # -----------------------------------------------------------------------
 
     @app.after_request
     def _headers_and_log(response):
@@ -215,34 +294,43 @@ def create_app(config_object=Config):
         for key, value in _SECURITY_HEADERS.items():
             response.headers.setdefault(key, value)
 
+        # HSTS only when request is actually HTTPS.
         if request.is_secure:
             response.headers.setdefault(
                 "Strict-Transport-Security",
                 "max-age=31536000; includeSubDomains",
             )
 
+        # Rate limit response.
         if response.status_code == 429:
             response.headers["Retry-After"] = str(
-                getattr(g, "rl_retry_after", 60)
+                getattr(
+                    g,
+                    "rl_retry_after",
+                    60,
+                )
             )
 
+        # API responses should not be cached.
         if request.path.startswith("/api"):
             response.headers.setdefault(
                 "Cache-Control",
                 "no-store",
             )
 
+        # Log API requests.
         if request.path.startswith("/api/"):
+            elapsed_ms = (
+                time.time()
+                - g.get("_t", time.time())
+            ) * 1000
+
             app.logger.info(
                 "%s %s -> %s (%.1fms) uid=%s",
                 request.method,
                 request.path,
                 response.status_code,
-                (
-                    time.time()
-                    - g.get("_t", time.time())
-                )
-                * 1000,
+                elapsed_ms,
                 getattr(
                     getattr(g, "user", None),
                     "_id",
@@ -253,32 +341,39 @@ def create_app(config_object=Config):
 
         return response
 
-    # ---------------------------------------------------------
-    # API blueprints
-    # ---------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Register API blueprints
+    # -----------------------------------------------------------------------
 
     for blueprint in ALL_BLUEPRINTS:
         app.register_blueprint(blueprint)
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------------------------
     # Database
-    # ---------------------------------------------------------
+    # -----------------------------------------------------------------------
 
     db.init_db(app)
 
-    # =========================================================
-    # API PROBES
-    # =========================================================
+    # -----------------------------------------------------------------------
+    # Health
+    # -----------------------------------------------------------------------
 
     @app.get("/api/health")
     def health():
-        """Liveness endpoint."""
+        """Liveness probe.
+
+        The process is alive even if a dependency is temporarily unavailable.
+        """
 
         db_ok = True
 
         try:
-            db.get_db().command({"ping": 1})
-        except Exception:  # noqa: BLE001
+            db.get_db().command(
+                {
+                    "ping": 1
+                }
+            )
+        except Exception:
             db_ok = False
 
         return {
@@ -298,9 +393,16 @@ def create_app(config_object=Config):
             },
         }
 
+    # -----------------------------------------------------------------------
+    # Readiness
+    # -----------------------------------------------------------------------
+
     @app.get("/api/ready")
     def ready():
-        """Readiness endpoint."""
+        """Readiness probe.
+
+        Returns 503 when required dependencies are unavailable.
+        """
 
         checks = {
             "database": False,
@@ -309,23 +411,28 @@ def create_app(config_object=Config):
 
         code = 200
 
-        # MongoDB
+        # Database.
         try:
-            db.get_db().command({"ping": 1})
+            db.get_db().command(
+                {
+                    "ping": 1
+                }
+            )
+
             checks["database"] = True
 
-        except Exception:  # noqa: BLE001
+        except Exception:
             code = 503
 
-        # S3
-        if app.config["STORAGE_BACKEND"] == "s3":
+        # S3 storage.
+        if app.config.get("STORAGE_BACKEND") == "s3":
             client = storage._s3_client()
 
             if client is None:
                 checks["storage"] = False
                 code = 503
 
-        # Redis
+        # Redis.
         if app.config.get("REDIS_URL"):
             redis_client = app.extensions.get(
                 "rm_redis"
@@ -341,7 +448,7 @@ def create_app(config_object=Config):
                         redis_client.ping()
                     )
 
-                except Exception:  # noqa: BLE001
+                except Exception:
                     checks["redis"] = False
                     code = 503
 
@@ -352,79 +459,22 @@ def create_app(config_object=Config):
             }
         ), code
 
-    # =========================================================
-    # FRONTEND
-    # =========================================================
+    # -----------------------------------------------------------------------
+    # Root
+    # -----------------------------------------------------------------------
 
     @app.get("/")
     def index():
-        """
-        Serve the RideMate frontend.
+        return {
+            "ok": True,
+            "service": "RideMate API",
+            "version": APP_VERSION,
+            "docs": "/api",
+        }
 
-        Before this change `/` returned API JSON.
-        It now serves frontend/index.html.
-        """
-
-        index_file = os.path.join(
-            frontend_dir,
-            "index.html",
-        )
-
-        if not os.path.isfile(index_file):
-            app.logger.error(
-                "Frontend index.html not found: %s",
-                index_file,
-            )
-
-            return jsonify(
-                {
-                    "ok": False,
-                    "error": {
-                        "code": "frontend_not_found",
-                        "message": (
-                            "Frontend index.html was not found."
-                        ),
-                    },
-                }
-            ), 500
-
-        return send_from_directory(
-            frontend_dir,
-            "index.html",
-        )
-
-    # ---------------------------------------------------------
-    # Frontend static files
-    #
-    # /css/styles.css
-    # /js/app.js
-    # /assets/...
-    # ---------------------------------------------------------
-
-    @app.get("/css/<path:filename>")
-    def frontend_css(filename):
-        return send_from_directory(
-            os.path.join(frontend_dir, "css"),
-            filename,
-        )
-
-    @app.get("/js/<path:filename>")
-    def frontend_js(filename):
-        return send_from_directory(
-            os.path.join(frontend_dir, "js"),
-            filename,
-        )
-
-    @app.get("/assets/<path:filename>")
-    def frontend_assets(filename):
-        return send_from_directory(
-            os.path.join(frontend_dir, "assets"),
-            filename,
-        )
-
-    # =========================================================
-    # API INDEX
-    # =========================================================
+    # -----------------------------------------------------------------------
+    # API index
+    # -----------------------------------------------------------------------
 
     @app.get("/api")
     def api_index():
@@ -438,9 +488,9 @@ def create_app(config_object=Config):
             ),
         }
 
-    # =========================================================
-    # PAYMENTS WEBHOOK
-    # =========================================================
+    # -----------------------------------------------------------------------
+    # Payment webhook
+    # -----------------------------------------------------------------------
 
     @app.route(
         app.config["PAYMENT_WEBHOOK_PATH"],
@@ -449,9 +499,9 @@ def create_app(config_object=Config):
     def payments_webhook():
         return payments.handle_webhook()
 
-    # =========================================================
-    # PAYOUTS WEBHOOK
-    # =========================================================
+    # -----------------------------------------------------------------------
+    # Payout webhook
+    # -----------------------------------------------------------------------
 
     @app.route(
         "/api/payments/payout-webhook",
@@ -460,16 +510,17 @@ def create_app(config_object=Config):
     def payouts_webhook():
         return payments.handle_payout_webhook()
 
-    # =========================================================
-    # AVATAR UPLOAD
-    # =========================================================
+    # -----------------------------------------------------------------------
+    # Avatar upload
+    # -----------------------------------------------------------------------
 
     @app.get("/api/uploads/avatar")
     def uploads_avatar():
-        """S3-backed avatars are fetched by key."""
+        """S3-backed avatars are fetched through this guarded route."""
 
         key = (
-            request.args.get("key") or ""
+            request.args.get("key")
+            or ""
         ).strip()
 
         if not key or not storage.is_public_avatar(key):
@@ -490,26 +541,23 @@ def create_app(config_object=Config):
             mimetype=content_type,
             headers={
                 "Cache-Control": (
-                    "public, max-age=31536000, immutable"
+                    "public, "
+                    "max-age=31536000, "
+                    "immutable"
                 )
             },
         )
 
-    # =========================================================
-    # UPLOADED AVATARS
-    # =========================================================
+    # -----------------------------------------------------------------------
+    # Local uploaded avatar files
+    # -----------------------------------------------------------------------
 
     @app.route(
         "/uploads/<path:filename>",
         methods=["GET", "HEAD"],
     )
     def uploaded_file(filename):
-        """
-        Serves ONLY public avatars.
-
-        Private vehicle documents are fetched through the
-        authorized API endpoint.
-        """
+        """Serve only public avatars."""
 
         if not storage.is_public_avatar(filename):
             return jsonify(
@@ -527,17 +575,34 @@ def create_app(config_object=Config):
             storage.UPLOAD_DIR,
         )
 
+        filepath = os.path.join(
+            target,
+            filename,
+        )
+
         return send_file(
-            os.path.join(target, filename),
+            filepath,
             conditional=True,
             max_age=31536000,
         )
 
+    # -----------------------------------------------------------------------
+    # Return Flask application
+    # -----------------------------------------------------------------------
+
     return app
 
 
+# ---------------------------------------------------------------------------
+# WSGI application
+# ---------------------------------------------------------------------------
+
 app = create_app()
 
+
+# ---------------------------------------------------------------------------
+# Local development
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     app.run(
