@@ -12,12 +12,12 @@ COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt \
     && pip install --no-cache-dir gunicorn
 
-# Copy application
+# Copy backend and frontend
 COPY backend ./backend
 COPY frontend ./frontend
 COPY gunicorn.conf.py ./
 
-# Create directories that the application needs to write to
+# Create writable directories
 RUN mkdir -p /app/backend/uploads \
     && chown -R app:app /app/backend \
     && chown -R app:app /app/frontend \
@@ -27,8 +27,6 @@ ENV PYTHONUNBUFFERED=1 \
     FLASK_ENV=production \
     HOST=0.0.0.0
 
-# Render provides PORT automatically.
-# Gunicorn configuration should read PORT from the environment.
 EXPOSE 10000
 
 USER app
