@@ -1,0 +1,12 @@
+.git
+.gitignore
+*.md
+__pycache__
+*.pyc
+.pytest_cache
+backend/.env
+backend/uploads
+server.log
+server.err
+static.log
+static.err

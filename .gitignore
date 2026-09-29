@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets -- never commit .env, only .env.example
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local database dumps
+*.dump
+mongodump/
+
+# Uploaded user files (avatars, vehicle documents)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Node / tooling
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Editors & OS
+.idea/
+.vscode/
+*.iml
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local dev server logs / pid files
+server.log
+server.err
+server.pid
+static.log
+static.err
