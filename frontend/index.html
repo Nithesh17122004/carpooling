@@ -2,14 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-
   <meta
     name="viewport"
     content="width=device-width, initial-scale=1.0, viewport-fit=cover"
   />
 
   <meta name="theme-color" content="#635bff" />
-
   <meta
     name="description"
     content="RideMate — share rides, split costs, travel together."
@@ -17,79 +15,61 @@
 
   <title>RideMate — Share rides, travel together</title>
 
-  <!-- App icon -->
   <link
     rel="icon"
     type="image/png"
-    href="/assets/icon/app_icon.png"
+    href="assets/icon/app_icon.png"
   />
 
   <!-- =========================================================
        API CONFIGURATION
+       =========================================================
+       
+       LOCAL DEVELOPMENT:
+       If frontend is running on localhost:5500/8000/etc.,
+       requests go to Flask on localhost:5000.
+
+       PRODUCTION:
+       Requests go to the Render Flask backend.
+
+       IMPORTANT:
+       Do NOT put Google Client Secret, Razorpay Secret,
+       MongoDB password, JWT secret, etc. in this file.
        ========================================================= -->
 
   <script>
-    /*
-     * Production:
-     *
-     * When the frontend and Flask API are served from the same
-     * Render domain:
-     *
-     *     https://carpooling-jm9s.onrender.com
-     *
-     * RIDEMATE_API must be an empty string.
-     *
-     * This makes:
-     *
-     *     fetch("/api/...")
-     *
-     * call:
-     *
-     *     https://carpooling-jm9s.onrender.com/api/...
-     *
-     * Development:
-     *
-     * If frontend is running on localhost:5500, 8000, 8080
-     * or 5173, use the local Flask backend on port 5000.
-     */
+    (function () {
+      const hostname = window.location.hostname;
+      const port = window.location.port;
 
-    window.RIDEMATE_API =
-      window.RIDEMATE_API ||
-      (
-        /^(5500|8000|8080|5173)$/.test(location.port)
-          ? "http://localhost:5000"
-          : ""
+      // Local frontend development
+      const isLocal =
+        hostname === "localhost" ||
+        hostname === "127.0.0.1";
+
+      if (isLocal) {
+        window.RIDEMATE_API = "http://localhost:5000";
+      } else {
+        // Production Render backend
+        window.RIDEMATE_API =
+          "https://carpooling-jm9s.onrender.com";
+      }
+
+      // Remove trailing slash if someone changes the URL later.
+      window.RIDEMATE_API = window.RIDEMATE_API.replace(/\/+$/, "");
+
+      console.log(
+        "[RideMate] API:",
+        window.RIDEMATE_API
       );
-
-    /*
-     * IMPORTANT:
-     *
-     * Do NOT put:
-     *
-     * GOOGLE_CLIENT_SECRET
-     * RAZORPAY_KEY_SECRET
-     * JWT_SECRET
-     * MONGO_URI
-     * REDIS_PASSWORD
-     *
-     * in this file.
-     *
-     * Only public frontend configuration belongs here.
-     *
-     * Google Client ID is obtained from:
-     *
-     *     GET /api/auth/providers
-     *
-     * The Google client SECRET remains on the Flask server.
-     */
+    })();
   </script>
 
   <!-- =========================================================
-       GOOGLE FONTS
+       FONTS
        ========================================================= -->
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-
   <link
     rel="preconnect"
     href="https://fonts.gstatic.com"
@@ -111,12 +91,12 @@
   />
 
   <!-- =========================================================
-       RIDEMATE STYLES
+       APP CSS
        ========================================================= -->
 
   <link
     rel="stylesheet"
-    href="/css/styles.css"
+    href="css/styles.css"
   />
 </head>
 
@@ -126,10 +106,7 @@
        SPLASH SCREEN
        ========================================================= -->
 
-  <div
-    id="splash"
-    class="splash"
-  >
+  <div id="splash" class="splash">
     <div
       class="splash__logo"
       aria-hidden="true"
@@ -165,6 +142,7 @@
       >
 
         <span class="brand__mark">
+
           <svg
             viewBox="0 0 24 24"
             fill="none"
@@ -172,7 +150,6 @@
             stroke-width="2.1"
             stroke-linecap="round"
             stroke-linejoin="round"
-            aria-hidden="true"
           >
             <path
               d="M5.2 11.2 6.7 6.8A2 2 0 0 1 8.6 5.4h6.8a2 2 0 0 1 1.9 1.4l1.5 4.4"
@@ -194,6 +171,7 @@
               r=".9"
             />
           </svg>
+
         </span>
 
         <span class="brand__name">
@@ -227,7 +205,6 @@
           stroke="currentColor"
           stroke-width="2.4"
           stroke-linecap="round"
-          aria-hidden="true"
         >
           <path d="M12 5v14" />
           <path d="M5 12h14" />
@@ -238,7 +215,7 @@
       </a>
 
 
-      <!-- Sidebar user -->
+      <!-- Logged-in user -->
 
       <div class="side-user">
 
@@ -259,12 +236,12 @@
 
         </div>
 
+
         <button
           class="btn-icon btn-icon--ghost"
           id="logoutBtn"
           title="Log out"
           aria-label="Log out"
-          type="button"
         >
 
           <svg
@@ -276,8 +253,8 @@
             stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
-            aria-hidden="true"
           >
+
             <path
               d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
             />
@@ -289,6 +266,7 @@
             <path
               d="M21 12H9"
             />
+
           </svg>
 
         </button>
@@ -318,8 +296,8 @@
             stroke-width="2.1"
             stroke-linecap="round"
             stroke-linejoin="round"
-            aria-hidden="true"
           >
+
             <path
               d="M5.2 11.2 6.7 6.8A2 2 0 0 1 8.6 5.4h6.8a2 2 0 0 1 1.9 1.4l1.5 4.4"
             />
@@ -365,7 +343,6 @@
           href="#/profile"
           class="avatar avatar--sm"
           id="topAvatar"
-          aria-label="Profile"
         ></a>
 
       </div>
@@ -374,7 +351,7 @@
 
 
     <!-- =======================================================
-         MAIN CONTENT
+         MAIN APPLICATION
          ======================================================= -->
 
     <main
@@ -391,7 +368,7 @@
 
 
     <!-- =======================================================
-         MOBILE BOTTOM NAVIGATION
+         MOBILE NAVIGATION
          ======================================================= -->
 
     <nav
@@ -403,7 +380,8 @@
 
 
   <!-- =========================================================
-       UNAUTHENTICATED ROOT
+       UNAUTHENTICATED AREA
+       Login / Register pages are injected here by app.js
        ========================================================= -->
 
   <div
@@ -412,19 +390,18 @@
 
 
   <!-- =========================================================
-       TOAST NOTIFICATIONS
+       GLOBAL TOASTS
        ========================================================= -->
 
   <div
     id="toastRoot"
     class="toast-root"
     aria-live="polite"
-    aria-atomic="true"
   ></div>
 
 
   <!-- =========================================================
-       MODALS
+       GLOBAL MODALS
        ========================================================= -->
 
   <div
@@ -447,7 +424,7 @@
 
   <script
     type="module"
-    src="/js/app.js"
+    src="js/app.js"
   ></script>
 
 </body>
