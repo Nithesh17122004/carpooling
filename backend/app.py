@@ -2,7 +2,7 @@
 
 Boot order:
 config -> logging -> Redis -> CORS -> error handlers -> blueprints
--> MongoDB -> routes.
+-> MongoDB -> routes -> frontend.
 """
 
 import logging
@@ -10,6 +10,7 @@ import os
 import re
 import time
 import uuid
+from pathlib import Path
 
 from flask import Flask, Response, g, jsonify, request, send_file
 from flask_cors import CORS
@@ -23,82 +24,99 @@ from . import db, payments, storage
 
 APP_VERSION = "2.1.0"
 
+# Frontend is at:
+# /app/frontend
+#
+# backend/app.py -> parent = /app/backend
+# parent.parent -> /app
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
 
 # ---------------------------------------------------------------------------
-# Content Security Policy
-#
-# The frontend uses:
-#   - Google Identity Services
-#   - Leaflet from unpkg
-#   - Google Fonts
-#   - browser-side API calls
-#
-# Keep the policy explicit instead of using a completely open CSP.
+# Security headers / Content Security Policy
 # ---------------------------------------------------------------------------
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
-    "Referrer-Policy": "no-referrer",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=(self)",
-    "Cross-Origin-Opener-Policy": "same-origin",
 
-    # Required for the current frontend.
-    #
-    # unsafe-inline is currently required because index.html contains
-    # a small inline configuration script.
-    #
-    # Once that inline script is moved to an external JS file, remove
-    # 'unsafe-inline' from script-src.
+    "X-Frame-Options": "DENY",
+
+    "Referrer-Policy": "no-referrer",
+
+    "Permissions-Policy": (
+        "camera=(), "
+        "microphone=(), "
+        "geolocation=(self)"
+    ),
+
+    # Google Sign-In uses a popup/window relationship.
+    # same-origin-allow-popups is compatible with Google Identity Services.
+    "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+
     "Content-Security-Policy": (
         "default-src 'self'; "
 
-        # Application JS + Google Sign-In + Leaflet
-        "script-src 'self' 'unsafe-inline' "
+        # JavaScript
+        "script-src "
+        "'self' "
+        "'unsafe-inline' "
         "https://unpkg.com "
         "https://accounts.google.com; "
 
         # Explicit script element policy
-        "script-src-elem 'self' 'unsafe-inline' "
+        "script-src-elem "
+        "'self' "
+        "'unsafe-inline' "
         "https://unpkg.com "
         "https://accounts.google.com; "
 
-        # Application styles + Google Fonts + Leaflet CSS
-        "style-src 'self' 'unsafe-inline' "
+        # CSS
+        "style-src "
+        "'self' "
+        "'unsafe-inline' "
         "https://fonts.googleapis.com "
         "https://unpkg.com; "
 
         # Fonts
-        "font-src 'self' data: "
+        "font-src "
+        "'self' "
+        "data: "
         "https://fonts.gstatic.com; "
 
-        # Images / avatars / Leaflet assets
-        "img-src 'self' data: blob: https:; "
+        # Images
+        "img-src "
+        "'self' "
+        "data: "
+        "blob: "
+        "https:; "
 
         # API/network requests
-        "connect-src 'self' "
+        "connect-src "
+        "'self' "
         "https://accounts.google.com "
+        "https://www.googleapis.com "
         "https://*.googleapis.com; "
 
-        # Google Sign-In may use an iframe
-        "frame-src 'self' "
+        # Google Sign-In popup/iframe
+        "frame-src "
+        "'self' "
         "https://accounts.google.com; "
 
-        # Leaflet may use workers/blob URLs
-        "worker-src 'self' blob:; "
+        # Web workers
+        "worker-src "
+        "'self' "
+        "blob:; "
 
-        # Do not allow plugins
+        # No plugins
         "object-src 'none'; "
 
-        # Do not allow arbitrary framing
+        # Prevent this app from being framed
         "frame-ancestors 'none'; "
 
-        # Forms should only submit to this application
-        "form-action 'self' "
+        # Form submissions
+        "form-action "
+        "'self' "
         "https://accounts.google.com; "
-
-        # Upgrade insecure resource requests
-        "upgrade-insecure-requests"
     ),
 }
 
@@ -128,9 +146,14 @@ def _configure_logging(app):
     app.logger.handlers = [handler]
     app.logger.setLevel(level)
 
-    # Quiet noisy third-party loggers.
-    for noisy in ("werkzeug", "requests", "urllib3"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    for noisy in (
+        "werkzeug",
+        "requests",
+        "urllib3",
+    ):
+        logging.getLogger(noisy).setLevel(
+            logging.WARNING
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -138,13 +161,18 @@ def _configure_logging(app):
 # ---------------------------------------------------------------------------
 
 def _init_redis(app):
-    url = app.config.get("REDIS_URL", "")
+    url = app.config.get(
+        "REDIS_URL",
+        "",
+    )
 
     if not url:
         app.extensions["rm_redis"] = None
+
         app.logger.info(
             "Redis not configured; using in-memory fallback."
         )
+
         return
 
     try:
@@ -181,25 +209,31 @@ def _init_redis(app):
 def create_app(config_object=Config):
     app = Flask(__name__)
 
-    # Load configuration.
+    # Load configuration
     app.config.from_object(config_object)
 
-    # Always initialise the extension key.
+    # Always initialise Redis extension
     app.extensions["rm_redis"] = None
 
     # -----------------------------------------------------------------------
-    # Production configuration validation
+    # Validate production configuration
     # -----------------------------------------------------------------------
 
     validate_runtime(app.config)
 
     # -----------------------------------------------------------------------
-    # Render / reverse proxy support
+    # Render / reverse proxy
     # -----------------------------------------------------------------------
 
-    proxy_count = app.config.get("TRUSTED_PROXY_COUNT", 0)
+    proxy_count = app.config.get(
+        "TRUSTED_PROXY_COUNT",
+        0,
+    )
 
-    if isinstance(proxy_count, int) and proxy_count > 0:
+    if (
+        isinstance(proxy_count, int)
+        and proxy_count > 0
+    ):
         app.wsgi_app = ProxyFix(
             app.wsgi_app,
             x_for=proxy_count,
@@ -237,7 +271,10 @@ def create_app(config_object=Config):
             }
         },
         supports_credentials=bool(
-            app.config.get("ALLOW_CREDENTIALS", False)
+            app.config.get(
+                "ALLOW_CREDENTIALS",
+                False,
+            )
         ),
         expose_headers=[
             "X-Request-Id"
@@ -251,7 +288,7 @@ def create_app(config_object=Config):
     register_error_handlers(app)
 
     # -----------------------------------------------------------------------
-    # Request ID middleware
+    # Request ID
     # -----------------------------------------------------------------------
 
     @app.before_request
@@ -263,8 +300,10 @@ def create_app(config_object=Config):
             or uuid.uuid4().hex
         )
 
-        # Sanitise client-supplied IDs so logs cannot be polluted.
-        rid = _ID_RE.sub("", proposed)[:64]
+        rid = _ID_RE.sub(
+            "",
+            proposed,
+        )[:64]
 
         if not rid:
             rid = uuid.uuid4().hex
@@ -280,7 +319,7 @@ def create_app(config_object=Config):
         g._t = time.time()
 
     # -----------------------------------------------------------------------
-    # Security headers + request logging
+    # Security headers + logging
     # -----------------------------------------------------------------------
 
     @app.after_request
@@ -292,16 +331,17 @@ def create_app(config_object=Config):
         )
 
         for key, value in _SECURITY_HEADERS.items():
-            response.headers.setdefault(key, value)
+            response.headers.setdefault(
+                key,
+                value,
+            )
 
-        # HSTS only when request is actually HTTPS.
         if request.is_secure:
             response.headers.setdefault(
                 "Strict-Transport-Security",
                 "max-age=31536000; includeSubDomains",
             )
 
-        # Rate limit response.
         if response.status_code == 429:
             response.headers["Retry-After"] = str(
                 getattr(
@@ -311,18 +351,19 @@ def create_app(config_object=Config):
                 )
             )
 
-        # API responses should not be cached.
         if request.path.startswith("/api"):
             response.headers.setdefault(
                 "Cache-Control",
                 "no-store",
             )
 
-        # Log API requests.
         if request.path.startswith("/api/"):
             elapsed_ms = (
                 time.time()
-                - g.get("_t", time.time())
+                - g.get(
+                    "_t",
+                    time.time(),
+                )
             ) * 1000
 
             app.logger.info(
@@ -332,7 +373,11 @@ def create_app(config_object=Config):
                 response.status_code,
                 elapsed_ms,
                 getattr(
-                    getattr(g, "user", None),
+                    getattr(
+                        g,
+                        "user",
+                        None,
+                    ),
                     "_id",
                     None,
                 )
@@ -346,7 +391,9 @@ def create_app(config_object=Config):
     # -----------------------------------------------------------------------
 
     for blueprint in ALL_BLUEPRINTS:
-        app.register_blueprint(blueprint)
+        app.register_blueprint(
+            blueprint
+        )
 
     # -----------------------------------------------------------------------
     # Database
@@ -360,10 +407,7 @@ def create_app(config_object=Config):
 
     @app.get("/api/health")
     def health():
-        """Liveness probe.
-
-        The process is alive even if a dependency is temporarily unavailable.
-        """
+        """Liveness probe."""
 
         db_ok = True
 
@@ -383,7 +427,9 @@ def create_app(config_object=Config):
             "providers": {
                 "maps": (
                     "google"
-                    if app.config.get("MAPS_API_KEY")
+                    if app.config.get(
+                        "MAPS_API_KEY"
+                    )
                     else "osm"
                 ),
                 "payments": app.config.get(
@@ -399,10 +445,7 @@ def create_app(config_object=Config):
 
     @app.get("/api/ready")
     def ready():
-        """Readiness probe.
-
-        Returns 503 when required dependencies are unavailable.
-        """
+        """Readiness probe."""
 
         checks = {
             "database": False,
@@ -411,7 +454,7 @@ def create_app(config_object=Config):
 
         code = 200
 
-        # Database.
+        # Database
         try:
             db.get_db().command(
                 {
@@ -424,16 +467,20 @@ def create_app(config_object=Config):
         except Exception:
             code = 503
 
-        # S3 storage.
-        if app.config.get("STORAGE_BACKEND") == "s3":
+        # S3 storage
+        if app.config.get(
+            "STORAGE_BACKEND"
+        ) == "s3":
+
             client = storage._s3_client()
 
             if client is None:
                 checks["storage"] = False
                 code = 503
 
-        # Redis.
+        # Redis
         if app.config.get("REDIS_URL"):
+
             redis_client = app.extensions.get(
                 "rm_redis"
             )
@@ -460,20 +507,11 @@ def create_app(config_object=Config):
         ), code
 
     # -----------------------------------------------------------------------
-    # Root
-    # -----------------------------------------------------------------------
-
-    @app.get("/")
-    def index():
-        return {
-            "ok": True,
-            "service": "RideMate API",
-            "version": APP_VERSION,
-            "docs": "/api",
-        }
-
-    # -----------------------------------------------------------------------
     # API index
+    #
+    # IMPORTANT:
+    # /api stays an API endpoint.
+    # / stays the frontend.
     # -----------------------------------------------------------------------
 
     @app.get("/api")
@@ -516,14 +554,17 @@ def create_app(config_object=Config):
 
     @app.get("/api/uploads/avatar")
     def uploads_avatar():
-        """S3-backed avatars are fetched through this guarded route."""
+        """S3-backed avatars."""
 
         key = (
             request.args.get("key")
             or ""
         ).strip()
 
-        if not key or not storage.is_public_avatar(key):
+        if (
+            not key
+            or not storage.is_public_avatar(key)
+        ):
             return jsonify(
                 {
                     "ok": False,
@@ -534,7 +575,9 @@ def create_app(config_object=Config):
                 }
             ), 404
 
-        data, content_type, _name = storage.read_key(key)
+        data, content_type, _name = (
+            storage.read_key(key)
+        )
 
         return Response(
             data,
@@ -559,7 +602,9 @@ def create_app(config_object=Config):
     def uploaded_file(filename):
         """Serve only public avatars."""
 
-        if not storage.is_public_avatar(filename):
+        if not storage.is_public_avatar(
+            filename
+        ):
             return jsonify(
                 {
                     "ok": False,
@@ -587,7 +632,124 @@ def create_app(config_object=Config):
         )
 
     # -----------------------------------------------------------------------
-    # Return Flask application
+    # FRONTEND
+    # -----------------------------------------------------------------------
+
+    @app.get("/")
+    def frontend_index():
+        """Serve the RideMate frontend."""
+
+        index_file = (
+            FRONTEND_DIR / "index.html"
+        )
+
+        if not index_file.is_file():
+            app.logger.error(
+                "Frontend index.html not found: %s",
+                index_file,
+            )
+
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "frontend_not_found",
+                        "message": (
+                            "Frontend index.html "
+                            "could not be found."
+                        ),
+                    },
+                }
+            ), 500
+
+        return send_file(
+            index_file
+        )
+
+    # -----------------------------------------------------------------------
+    # Frontend static files + SPA fallback
+    # -----------------------------------------------------------------------
+
+    @app.route(
+        "/<path:path>",
+        methods=["GET"],
+    )
+    def frontend_files(path):
+        """Serve frontend files.
+
+        Examples:
+            /css/styles.css
+            /js/app.js
+            /js/api.js
+            /assets/icon/app_icon.png
+
+        Unknown frontend paths fall back to index.html so the hash router
+        continues to work.
+        """
+
+        # Never let this frontend fallback swallow API requests.
+        if (
+            path == "api"
+            or path.startswith("api/")
+        ):
+            return jsonify(
+                {
+                    "error": {
+                        "code": "not_found",
+                        "message": "Resource not found.",
+                    },
+                    "ok": False,
+                }
+            ), 404
+
+        requested_file = (
+            FRONTEND_DIR / path
+        )
+
+        # Security: prevent path traversal.
+        try:
+            requested_file.resolve().relative_to(
+                FRONTEND_DIR.resolve()
+            )
+        except ValueError:
+            return jsonify(
+                {
+                    "error": {
+                        "code": "not_found",
+                        "message": "Resource not found.",
+                    },
+                    "ok": False,
+                }
+            ), 404
+
+        # Serve actual frontend file.
+        if requested_file.is_file():
+            return send_file(
+                requested_file
+            )
+
+        # SPA fallback.
+        index_file = (
+            FRONTEND_DIR / "index.html"
+        )
+
+        if index_file.is_file():
+            return send_file(
+                index_file
+            )
+
+        return jsonify(
+            {
+                "error": {
+                    "code": "not_found",
+                    "message": "Resource not found.",
+                },
+                "ok": False,
+            }
+        ), 404
+
+    # -----------------------------------------------------------------------
+    # Return application
     # -----------------------------------------------------------------------
 
     return app
