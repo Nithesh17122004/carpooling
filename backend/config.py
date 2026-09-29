@@ -116,7 +116,7 @@ class Config:
     RAZORPAY_KEY_ID = _env("PAYMENT_KEY_ID", "") or _env("RAZORPAY_KEY_ID", "")
     RAZORPAY_KEY_SECRET = _env("PAYMENT_KEY_SECRET", "") or _env("RAZORPAY_KEY_SECRET", "")
     RAZORPAY_WEBHOOK_SECRET = _env("RAZORPAY_WEBHOOK_SECRET", "")
-    PAYMENT_PROVIDER=razorpay  # demo | razorpay
+    PAYMENT_PROVIDER="razorpay"  # demo | razorpay
     PAYMENT_WEBHOOK_PATH = _env("PAYMENT_WEBHOOK_PATH", "/api/payments/webhook")
     # Payout provider: `manual` (staff settle, confirmed out of band) or
     # `razorpayx` (RazorpayX linked account). Either way only a provider
