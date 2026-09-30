@@ -239,6 +239,8 @@ def _razorpay_app():
     app = create_app()
     app.config.update({"PAYMENT_PROVIDER": "razorpay",
                        "RAZORPAY_WEBHOOK_SECRET": "whsec_test_secret",
+                       "RAZORPAY_KEY_ID": "rzp_test_KEY",
+                       "RAZORPAY_KEY_SECRET": "test_secret_value",
                        "PAYOUT_PROVIDER": "razorpayx"})
     return app
 
@@ -378,7 +380,7 @@ def test_manual_payout_is_confirmed_with_a_bank_reference(client, db, admin, dri
     assert settled["status"] == "paid"
     assert settled["provider_reference"] == "UTR123456789"
     assert settled["confirmed_by"] == "manual"
-    assert db.audit_logs.count_documents({"action": "payout.confirm"}) == 1
+    assert db.audit_logs.count_documents({"action": "financial.payout.confirm"}) == 1
 
 
 def test_manual_confirmation_is_idempotent_on_the_same_reference(client, db, admin, driver,
@@ -414,7 +416,7 @@ def test_manual_confirmation_cannot_override_a_razorpayx_settlement(client, db, 
     assert resp.get_json()["error"]["code"] == "payout_not_manual"
     assert db.payouts.find_one({"_id": _Oid(payout["id"])})["status"] == "processing"
     # the refusal itself is auditable
-    assert db.audit_logs.count_documents({"action": "payout.confirm_refused"}) == 1
+    assert db.audit_logs.count_documents({"action": "financial.payout.confirm_refused"}) == 1
 
 
 def test_a_bank_reference_cannot_be_reused_across_payouts(client, db, admin, driver, vehicle):
@@ -583,31 +585,235 @@ def test_balance_accounting_stays_correct_across_the_whole_cycle(db, driver):
     assert abs(total) < 0.01, total
 
 
+def test_a_payout_only_ever_goes_to_the_drivers_own_linked_account(db, driver):
+    """A driver's money goes to that driver's linked account, addressed by that
+    driver's id. The old implementation read one global
+    RAZORPAY_X_ACCOUNT_NUMBER and paid everybody into it -- so either nobody was
+    paid, or one driver received everyone's earnings.
+    """
+    from backend import payout_providers
+    import razorpay
+
+    sent = []
+
+    class _Client:
+        class payout:
+            @staticmethod
+            def create(request, **kwargs):
+                sent.append((request, kwargs))
+                return {"id": "payout_%d" % len(sent)}
+
+    app = _razorpay_app()
+    original = razorpay.Client
+    razorpay.Client = lambda auth=None: _Client()
+    try:
+        uid = driver["user"]["_id"]
+        _earn(db, uid, 100)
+        db.users.update_one({"_id": uid},
+                            {"$set": {"payout_onboarding_status": "verified",
+                                      "payout_onboarding_account_id": "acc_alice"}})
+        with app.app_context():
+            p = new_payout(uid, 70)
+            assert p["provider"] == "razorpayx"
+            result = submit_payout(p["_id"])
+    finally:
+        razorpay.Client = original
+
+    assert result["status"] == PAYOUT_PROCESSING
+    assert result["provider_reference"] == "payout_1"
+    request, kwargs = sent[0]
+    assert request["account_number"] == "acc_alice"
+    assert request["amount"] == 7000
+    # Deterministic idempotency key: a retry after a timeout must be recognised
+    # as the same transfer, not a second one.
+    assert kwargs["idempotency_key"] == payout_providers.idempotency_key_for(p)
+
+
+def test_a_shared_platform_account_can_never_be_a_payout_destination(db, driver):
+    """There is no configuration that names a payout destination any more.
+
+    This is the regression guard for the actual bug: if someone re-adds a
+    fallback to a configured account, this fails.
+    """
+    from backend import payout_providers
+    from backend.config import validate_runtime
+
+    provider = payout_providers.provider_for("razorpayx")
+    uid = driver["user"]["_id"]
+    _earn(db, uid, 100)
+    db.users.update_one({"_id": uid}, {"$set": {
+        "payout_onboarding_status": "verified",
+        "payout_onboarding_account_id": "acc_alice"}})
+
+    # A driver with no linked account has no destination, whatever is configured.
+    unonboarded = dict(db.users.find_one({"_id": uid}))
+    unonboarded["payout_onboarding_account_id"] = None
+    with pytest.raises(payout_providers.PayoutProviderError) as exc:
+        provider.destination_account_id(unonboarded)
+    assert exc.value.reason == "no_linked_account"
+
+    # And production config refuses to boot with a shared account set.
+    with pytest.raises(RuntimeError) as fatal:
+        validate_runtime({
+            "ENV": "production", "PAYMENT_PROVIDER": "razorpay",
+            "PAYOUT_PROVIDER": "razorpayx",
+            "RAZORPAY_KEY_ID": "rzp_test_x", "RAZORPAY_KEY_SECRET": "s",
+            "RAZORPAY_X_ACCOUNT_NUMBER": "acc_RAZORPAYXSHARED",
+            "MONGO_DB_NAME": "ridemate", "REDIS_URL": "redis://localhost:6379/0",
+            "REFRESH_COOKIE_SECURE": True, "COOKIE_SECURE": True,
+            "RAZORPAY_WEBHOOK_SECRET": "whsec_prod_test",
+            "SECRET_KEY": "x" * 48, "JWT_SECRET": "y" * 48,
+            "GOOGLE_CLIENT_SECRET": "z" * 24,
+        })
+    assert "RAZORPAY_X_ACCOUNT_NUMBER" in str(fatal.value)
+
+    # The same production config without the shared account passes the gate.
+    validate_runtime({
+        "ENV": "production", "PAYMENT_PROVIDER": "razorpay",
+        "PAYOUT_PROVIDER": "razorpayx",
+        "RAZORPAY_KEY_ID": "rzp_test_x", "RAZORPAY_KEY_SECRET": "s",
+        "MONGO_DB_NAME": "ridemate", "REDIS_URL": "redis://localhost:6379/0",
+        "REFRESH_COOKIE_SECURE": True, "COOKIE_SECURE": True,
+        "RAZORPAY_WEBHOOK_SECRET": "whsec_prod_test",
+        "SECRET_KEY": "x" * 48, "JWT_SECRET": "y" * 48,
+        "GOOGLE_CLIENT_SECRET": "z" * 24,
+    })
+
+
+def test_a_provider_rejection_fails_the_payout_permanently(db, driver):
+    """The provider said no. Retrying forever would hide that behind a queue
+    that never drains, so the payout fails and stays failed until a human acts."""
+    from backend.errors import APIError
+    import razorpay
+
+    class _Client:
+        class payout:
+            @staticmethod
+            def create(request, **kwargs):
+                raise RuntimeError("The beneficiary account is invalid")
+
+    app = _razorpay_app()
+    original = razorpay.Client
+    razorpay.Client = lambda auth=None: _Client()
+    try:
+        uid = driver["user"]["_id"]
+        _earn(db, uid, 100)
+        db.users.update_one({"_id": uid}, {"$set": {
+            "payout_onboarding_status": "verified",
+            "payout_onboarding_account_id": "acc_broken"}})
+        with app.app_context():
+            p = new_payout(uid, 70)
+            with pytest.raises(APIError) as exc:
+                submit_payout(p["_id"])
+    finally:
+        razorpay.Client = original
+
+    assert exc.value.status == 502
+    stored = db.payouts.find_one({"_id": p["_id"]})
+    assert stored["status"] == PAYOUT_FAILED
+    assert stored["failure_reason"] == "rejected"
+    assert stored["dispatch_attempts"] == 1
+    # The stored error is a short token, never the provider's message: that can
+    # carry account details, and this ends up in logs and the admin UI.
+    assert "beneficiary" not in str(stored["failure_reason"])
+
+
+def test_a_provider_timeout_keeps_the_payout_retryable(db, driver):
+    """A timeout means we do not know, not that it failed. The payout stays
+    pending and the balance stays reserved, so the next attempt can safely
+    re-send with the same idempotency key."""
+    from backend.errors import APIError
+    import razorpay
+
+    class _Client:
+        class payout:
+            @staticmethod
+            def create(request, **kwargs):
+                raise RuntimeError("Read timed out")
+
+    app = _razorpay_app()
+    original = razorpay.Client
+    razorpay.Client = lambda auth=None: _Client()
+    try:
+        uid = driver["user"]["_id"]
+        _earn(db, uid, 100)
+        db.users.update_one({"_id": uid}, {"$set": {
+            "payout_onboarding_status": "verified",
+            "payout_onboarding_account_id": "acc_alice"}})
+        with app.app_context():
+            p = new_payout(uid, 70)
+            with pytest.raises(APIError) as exc:
+                submit_payout(p["_id"])
+    finally:
+        razorpay.Client = original
+
+    assert exc.value.status == 503
+    assert exc.value.code == "payout_provider_unavailable"
+    stored = db.payouts.find_one({"_id": p["_id"]})
+    assert stored["status"] == PAYOUT_PENDING
+    assert stored["last_dispatch_error"] == "timeout"
+    assert stored["dispatch_attempts"] == 1
+    assert outstanding_payable(uid) == 0
+
+
 def test_razorpayx_without_an_account_fails_loudly_and_stays_retryable(db, driver):
+    """A driver can be payout-eligible without having a provider account.
+
+    Verification by hand (no linked-account flow) leaves `status = verified` with
+    no account id. There is then nowhere to send the money, and the only safe
+    answer is to refuse -- but *retryably*: the driver's earnings stay reserved
+    and the payout succeeds the moment they finish onboarding. Failing it
+    permanently would take a real payout off the queue for a reason that has
+    nothing to do with the money.
+    """
     from backend.errors import APIError
 
     app = _razorpay_app()
     uid = driver["user"]["_id"]
     _earn(db, uid, 100)
+    db.users.update_one({"_id": uid}, {"$set": {
+        "payout_onboarding_status": "verified",
+        "payout_onboarding_account_id": None}})
 
     with app.app_context():
-        # no linked RazorpayX account: the payout must be created as a
-        # razorpayx payout, then refuse to send rather than silently "succeed".
         p = new_payout(uid, 70)
         assert p["provider"] == "razorpayx"
-        try:
+        with pytest.raises(APIError) as exc:
             submit_payout(p["_id"])
-        except APIError as exc:
-            assert exc.status == 503, exc.status
-            assert exc.code == "payouts_unconfigured", exc.code
-        else:
-            raise AssertionError("unconfigured razorpayx must not silently succeed")
+        assert exc.value.status == 503, exc.value.status
+        assert exc.value.code == "payout_provider_unavailable", exc.value.code
 
-        # released back to pending, so a fixed configuration can retry cleanly
+        # released back to pending, so completing onboarding can retry cleanly
         stored = db.payouts.find_one({"_id": p["_id"]})
         assert stored["status"] == PAYOUT_PENDING
         assert stored["processing_at"] is None
+        assert stored["last_dispatch_error"] == "no_linked_account"
+        assert stored["dispatch_attempts"] == 1
         assert outstanding_payable(uid) == 0
+
+        # Once the account exists, the very same payout sends.
+        db.users.update_one({"_id": uid},
+                            {"$set": {"payout_onboarding_account_id": "acc_alice"}})
+        import razorpay
+
+        sent = []
+
+        class _Client:
+            class payout:
+                @staticmethod
+                def create(request, **kwargs):
+                    sent.append(request)
+                    return {"id": "payout_recovered"}
+
+        original = razorpay.Client
+        razorpay.Client = lambda auth=None: _Client()
+        try:
+            done = submit_payout(p["_id"])
+        finally:
+            razorpay.Client = original
+
+    assert done["status"] == PAYOUT_PROCESSING
+    assert sent[0]["account_number"] == "acc_alice"
 
 
 def test_manual_payout_needs_a_confirmation_before_it_is_paid(db, driver):

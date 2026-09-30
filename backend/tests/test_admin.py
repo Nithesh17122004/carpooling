@@ -83,7 +83,7 @@ def test_create_and_advance_payout(client, db, admin, driver, rider, vehicle):
 
     entry = db.payouts.find_one({"_id": ObjectId(payout["id"])})
     assert entry["status"] == "processing"
-    assert db.audit_logs.count_documents({"action": "payout.create"}) == 1
+    assert db.audit_logs.count_documents({"action": "financial.payout.create"}) == 1
 
 
 def test_no_balance_payout_rejected(client, admin, driver):
@@ -122,3 +122,75 @@ def test_analytics_endpoint(client, db, admin, driver, rider, vehicle):
     assert a["rides"]["fill_rate"] == 0.5  # 2 of 4 seats
     assert a["payments"]["success_count"] == 1
     assert a["payments"]["gmv"] == 200
+
+
+# -------------------------------------------------------------- reconciliation
+def test_a_reconciliation_run_is_recorded(client, db, admin, driver, rider, vehicle):
+    """Returning a report is not the same as recording one. Without a stored
+    run there is no evidence a check ever happened, and no way to see that
+    today's clean result was not also clean last month."""
+    _confirmed_driver_payment(client, db, driver, rider, vehicle, fare=100)
+
+    r = client.get("/api/admin/reconcile", headers=admin["auth"])
+    assert r.status_code == 200, r.get_json()
+    body = r.get_json()
+    assert body["ok"] is True
+    run = body["run"]
+    assert run["status"] == body["status"]
+    assert run["issue_count"] == len(body["issues"])
+
+    stored = db.reconciliations.find_one({"run_id": run["id"]})
+    assert stored is not None, "the run was returned but not stored"
+    assert stored["ran_by"] == str(admin["user"]["_id"])
+    assert stored["info"]["gmv"] == 100
+    # The snapshot carries the counts it was computed from, so two runs can be
+    # compared instead of taken on trust.
+    assert stored["issues"] == body["issues"]
+    assert stored["ran_at"] is not None
+
+
+def test_reconciliation_is_audited(client, db, admin, driver, rider, vehicle):
+    _confirmed_driver_payment(client, db, driver, rider, vehicle, fare=100)
+    client.get("/api/admin/reconcile", headers=admin["auth"])
+    row = db.audit_logs.find_one({"action": "financial.reconcile"})
+    assert row is not None
+    assert row["actor_role"] == "admin"
+    assert row["meta"]["status"] == "balanced"
+
+
+def test_each_reconciliation_run_gets_its_own_record(client, db, admin, driver, rider, vehicle):
+    _confirmed_driver_payment(client, db, driver, rider, vehicle, fare=100)
+    a = client.get("/api/admin/reconcile", headers=admin["auth"]).get_json()["run"]["id"]
+    b = client.get("/api/admin/reconcile", headers=admin["auth"]).get_json()["run"]["id"]
+    assert a != b
+    assert db.reconciliations.count_documents({}) == 2
+
+
+def test_reconciliation_flags_a_payment_in_the_wrong_currency(client, db, admin,
+                                                               driver, rider, vehicle):
+    """A foreign-currency row makes every sum above it meaningless, so it has
+    to be an issue in its own right rather than a footnote under the totals."""
+    _confirmed_driver_payment(client, db, driver, rider, vehicle, fare=100)
+    before = client.get("/api/admin/reconcile", headers=admin["auth"]).get_json()
+    assert before["status"] == "balanced", before["issues"]
+
+    db.payments.update_one({}, {"$set": {"currency": "USD"}})
+
+    after = client.get("/api/admin/reconcile", headers=admin["auth"]).get_json()
+    assert after["status"] == "attention"
+    kinds = {i["kind"] for i in after["issues"]}
+    assert "mixed_currency" in kinds, after["issues"]
+
+
+def test_a_stored_reconciliation_run_never_blocks_the_report(client, db, admin, monkeypatch):
+    """Losing the audit trail is bad; failing the report because of it is worse.
+    An operator needs the numbers even when the write side is broken."""
+    from pymongo.collection import Collection
+
+    def boom(self, *a, **k):
+        raise RuntimeError("write failed")
+
+    monkeypatch.setattr(Collection, "insert_one", boom)
+    r = client.get("/api/admin/reconcile", headers=admin["auth"])
+    assert r.status_code == 200, r.get_json()
+    assert r.get_json()["ok"] is True

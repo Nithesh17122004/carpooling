@@ -21,12 +21,15 @@ def _isolated_driver(db, client, seq):
         "seat_count": 4,
     })
     assert v.status_code == 201, v.get_json()
-    # this limiter fixture is about rate limits, not KYC, so the vehicle is
-    # marked verified to keep the publish gate out of the way
+    # This fixture is about rate limits, not KYC, so all three publish gates are
+    # cleared to keep them out of the way. Each gate has its own tests.
     from bson import ObjectId
 
-    db.vehicles.update_one({"_id": ObjectId(v.get_json()["vehicle"]["id"])},
-                           {"$set": {"verification_status": "verified"}})
+    from backend.tests.conftest import satisfy_other_publish_gates
+
+    user = db.users.find_one({"email": email})
+    satisfy_other_publish_gates(db, user["_id"],
+                               ObjectId(v.get_json()["vehicle"]["id"]))
     r = make_ride(client, hdrs, v.get_json()["vehicle"])
     ride_id = r.get_json()["ride"]["id"]
     return hdrs, ride_id

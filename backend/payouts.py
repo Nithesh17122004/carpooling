@@ -27,6 +27,7 @@ from flask import current_app
 
 from .db import get_db, utcnow
 from .errors import APIError
+from .states import BOOKING_AWAITING_COMPLETION, BOOKING_DISPUTED
 
 PAYOUT_PENDING = "pending"
 PAYOUT_PROCESSING = "processing"
@@ -66,31 +67,16 @@ def _paise(value):
     return int(round(float(value or 0.0) * 100))
 
 
+def _attempts(payout):
+    """How many times this payout has been handed to a provider."""
+    try:
+        return int(payout.get("dispatch_attempts") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def payout_provider():
     return getattr(current_app, "config", {}).get("PAYOUT_PROVIDER", "manual")
-
-
-def _razorpayx_account():
-    from .config import Config
-
-    return (current_app.config.get("RAZORPAY_X_ACCOUNT_NUMBER", "")
-            or getattr(Config, "RAZORPAY_X_ACCOUNT_NUMBER", ""))
-
-
-def _razorpayx_client():
-    """RazorpayX client, or None when the account is not linked/configured."""
-    from .config import Config
-
-    if not Config.RAZORPAY_KEY_ID or not Config.RAZORPAY_KEY_SECRET:
-        return None
-    if not _razorpayx_account():
-        return None
-    try:
-        import razorpay
-
-        return razorpay.Client(auth=(Config.RAZORPAY_KEY_ID, Config.RAZORPAY_KEY_SECRET))
-    except ImportError:
-        return None
 
 
 def can_transition_payout(source, target):
@@ -106,8 +92,23 @@ def new_payout(user_id, amount, *, currency="INR", period=None, booking_ids=None
     enforced HERE rather than only in the admin route, so no caller can bypass
     the invariant that a payout never exceeds what the driver has earned and not
     already reserved.
+
+    Payout onboarding is checked before anything is written. The gate lives here
+    rather than in the admin route for the same reason the cap does: a route that
+    forgets to call it is an unbounded payout path, and money moving into an
+    unverified account is not recoverable by asking nicely afterwards.
+
+    The gate runs *after* argument validation on purpose. A caller that sent a
+    zero or absurd amount deserves to be told that, not to be told about their
+    onboarding status; and a caller that sent a valid amount deserves the
+    onboarding error rather than a confusing amount error.
     """
-    from .ledger import post_entry
+    from . import onboarding
+    from .ledger import assert_currency, business_key as ledger_business_key, post_entry
+
+    # A payout in a currency the service does not account in would be summed
+    # against INR driver earnings, so it is refused before any money is reserved.
+    currency = assert_currency(currency, field="payout currency")
 
     amount = round(float(amount), 2)
     if amount <= 0:
@@ -118,6 +119,13 @@ def new_payout(user_id, amount, *, currency="INR", period=None, booking_ids=None
     if amount > limit:
         raise APIError("Payout exceeds the single-transfer limit.", 422,
                        code="payout_too_large")
+
+    db = get_db()
+    driver = db.users.find_one({"_id": user_id})
+    if driver is None:
+        raise APIError("Driver not found.", 404, code="not_found")
+    onboarding.assert_settlement_allowed(driver, action="create_payout")
+
     outstanding = outstanding_payable(user_id)
     # Compare in integer paise: a float tolerance would quietly permit an
     # overdraw of a single paisa, which is exactly the kind of rounding gap
@@ -126,9 +134,9 @@ def new_payout(user_id, amount, *, currency="INR", period=None, booking_ids=None
         raise APIError(
             "Payout exceeds the driver's outstanding balance.", 422,
             code="payout_exceeds_balance",
-            details={"requested": amount, "outstanding": round(max(outstanding, 0.0), 2)})
+            details={"requested": amount, "outstanding": round(max(outstanding, 0.0), 2),
+                     "held_pending_completion": held_payable(user_id)})
 
-    db = get_db()
     doc = {
         "user_id": user_id,
         "amount": amount,
@@ -147,9 +155,12 @@ def new_payout(user_id, amount, *, currency="INR", period=None, booking_ids=None
         "failure_reason": None,
     }
     doc["_id"] = db.payouts.insert_one(doc).inserted_id
+    # The business key is derived from the payout id, so even if the insert
+    # above were somehow replayed the ledger effect can only be posted once.
     post_entry(account_id=user_id, account_type="driver", entry_type="DRIVER_PAYOUT",
                amount=-amount, reference=doc["reference"],
-               meta={"payout_id": str(doc["_id"])})
+               meta={"payout_id": str(doc["_id"])},
+               business_key=ledger_business_key("payout", doc["_id"]))
     return doc
 
 
@@ -169,6 +180,8 @@ def submit_payout(payout_id, *, idempotency_key=None):
     unchanged instead of creating a second transfer. This is the property that
     makes a retry after a timeout safe.
     """
+    from . import payout_providers
+
     db = get_db()
     payout = db.payouts.find_one({"_id": payout_id})
     if not payout:
@@ -191,6 +204,41 @@ def submit_payout(payout_id, *, idempotency_key=None):
     provider_ref = None
     try:
         provider_ref = _dispatch(claimed)
+    except payout_providers.PayoutProviderError as exc:
+        # Transient failures stay retryable. A timeout does not mean the
+        # transfer failed -- it means we do not know. Failing the payout here
+        # would tell the worker to give up on money that may already be on its
+        # way, and a retry must be safe in exactly this situation, which is why
+        # the provider sends a deterministic idempotency key.
+        #
+        # Permanent failures fail the payout. Retrying a rejected beneficiary
+        # account forever hides a real onboarding problem behind a queue that
+        # never drains.
+        if exc.transient:
+            db.payouts.update_one({"_id": payout_id, "status": PAYOUT_PROCESSING},
+                                  {"$set": {"status": PAYOUT_PENDING,
+                                            "processing_at": None,
+                                            "dispatch_attempts": _attempts(claimed) + 1,
+                                            "last_dispatch_error": exc.reason,
+                                            "last_dispatch_attempt_at": utcnow(),
+                                            "updated_at": utcnow()}})
+        else:
+            db.payouts.update_one({"_id": payout_id, "status": PAYOUT_PROCESSING},
+                                  {"$set": {"status": PAYOUT_FAILED,
+                                            "failed_at": utcnow(),
+                                            "dispatch_attempts": _attempts(claimed) + 1,
+                                            "failure_reason": exc.reason,
+                                            "last_dispatch_error": exc.reason,
+                                            "last_dispatch_attempt_at": utcnow(),
+                                            "updated_at": utcnow()}})
+        if exc.transient:
+            raise APIError("The provider could not be reached. The payout is still "
+                           "pending and will be retried.", 503,
+                           code="payout_provider_unavailable",
+                           details={"reason": exc.reason}) from None
+        raise APIError("The payout was rejected by the provider.", 502,
+                       code="payout_submit_failed",
+                       details={"reason": exc.reason}) from None
     except APIError:
         # Release the claim so the payout is retryable rather than stuck.
         db.payouts.update_one({"_id": payout_id, "status": PAYOUT_PROCESSING},
@@ -201,7 +249,9 @@ def submit_payout(payout_id, *, idempotency_key=None):
         db.payouts.update_one({"_id": payout_id, "status": PAYOUT_PROCESSING},
                               {"$set": {"status": PAYOUT_FAILED,
                                         "failed_at": utcnow(),
+                                        "dispatch_attempts": _attempts(claimed) + 1,
                                         "failure_reason": type(exc).__name__,
+                                        "last_dispatch_attempt_at": utcnow(),
                                         "updated_at": utcnow()}})
         raise APIError("The payout could not be sent to the provider.", 502,
                        code="payout_submit_failed", details={"reason": type(exc).__name__})
@@ -214,30 +264,21 @@ def submit_payout(payout_id, *, idempotency_key=None):
 
 
 def _dispatch(payout):
-    """Ask the configured provider to move the money. Returns its reference."""
-    provider = payout.get("provider", "manual")
-    if provider == "razorpayx":
-        client = _razorpayx_client()
-        if client is None:
-            raise APIError("RazorpayX is not configured on the server.", 503,
-                           code="payouts_unconfigured")
-        account = _razorpayx_account()
-        try:
-            resp = client.payout.create({
-                "account_number": account,
-                "amount": int(round(float(payout["amount"]) * 100)),
-                "currency": payout.get("currency", "INR"),
-                "mode": "UPI",
-                "purpose": "payout",
-                "reference_id": payout["reference"],
-            })
-        except Exception as exc:  # noqa: BLE001
-            raise APIError("The payout was rejected by the provider.", 502,
-                           code="payout_submit_failed", details={"reason": type(exc).__name__})
-        return (resp or {}).get("id")
-    # `manual` provider: staff settle out of band and confirm via webhook/UI.
-    # The payout still sits in `processing` until a confirmation arrives.
-    return None
+    """Send the money through the payout's provider. Returns its reference.
+
+    The destination is resolved from the driver's own verified onboarding
+    record by the provider, never from configuration. The old
+    `RAZORPAY_X_ACCOUNT_NUMBER` fallback is gone: a single global account meant
+    one driver received everyone's earnings, or everyone's earnings vanished
+    into a platform account.
+    """
+    from . import payout_providers
+
+    provider = payout_providers.provider_for(payout.get("provider", "manual"))
+    driver = get_db().users.find_one({"_id": payout["user_id"]})
+    if driver is None:
+        raise APIError("Driver not found for this payout.", 404, code="not_found")
+    return provider.send(payout, driver)
 
 
 def confirm_payout(payout_id, provider_reference, *, source="provider"):
@@ -344,6 +385,62 @@ def reserved_payable(user_id):
     return round(sum(float(r.get("amount", 0.0) or 0.0) for r in rows), 2)
 
 
+# Booking states whose earnings must not be paid out yet. Defined here, in
+# payout terms, because "which bookings are these" is a question the money path
+# asks -- `states.booking_blocks_settlement` is the wider set that also covers
+# refunds, which have their own separate flow.
+_HELD_BOOKING_STATES = (BOOKING_AWAITING_COMPLETION, BOOKING_DISPUTED)
+
+
+def _driver_net_of(booking):
+    """The driver's share of one booking, read from the commission rate frozen
+    onto its payment at order creation.
+
+    Read from the payment rather than recomputed from config: a later commission
+    change must not change what a historical trip owes, and this figure is
+    subtracted from a real balance.
+    """
+    db = get_db()
+    payment = db.payments.find_one({"booking_id": booking["_id"]})
+    if not payment:
+        # No payment row means no DRIVER_PAYABLE was ever posted for this trip,
+        # so there is nothing held to subtract.
+        return 0.0
+    try:
+        return float(payment.get("driver_net") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def held_payable(user_id):
+    """Earned money that is NOT yet releasable to a payout.
+
+    This is the bridge between the trip-completion state machine and the money
+    path. A booking's `DRIVER_PAYABLE` ledger entry is posted when the fare is
+    collected, which is *before* anybody knows whether the trip happened. The
+    ledger alone would therefore let a driver be paid for a trip the passenger
+    never confirmed, or one under active dispute.
+
+    Rather than withholding the ledger entry (which would break
+    `gross == fee + net` reconciliation for a legitimate fare), the rupees stay
+    owed and are reported here as held. `outstanding_payable` subtracts them, so
+    a held rupee is visible in the balance, excluded from payout, and released
+    automatically the moment the trip is confirmed.
+    """
+    from . import completion
+
+    db = get_db()
+    total = 0.0
+    for booking in db.bookings.find({"owner_id": user_id,
+                                     "status": {"$in": list(_HELD_BOOKING_STATES)}}):
+        if completion.is_payable(booking):
+            # Already confirmed or auto-confirmed: the row is stale in this
+            # query's window and must not be withheld.
+            continue
+        total += _driver_net_of(booking)
+    return round(total, 2)
+
+
 def outstanding_payable(user_id):
     """Earned by the driver and NOT yet committed to any payout attempt.
 
@@ -352,8 +449,11 @@ def outstanding_payable(user_id):
     is merely `processing` has already debited the driver account, so treating
     it as still-available would let a second payout be created for the same
     rupees.
+
+    Held earnings (unconfirmed or disputed trips) are subtracted, so the payout
+    cap cannot be used to pay out a trip the passenger has not confirmed.
     """
-    return round(_earned(user_id) - reserved_payable(user_id), 2)
+    return round(_earned(user_id) - reserved_payable(user_id) - held_payable(user_id), 2)
 
 
 def void_payout(payout_id, reason):

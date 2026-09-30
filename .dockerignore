@@ -1,12 +1,59 @@
+# Anything that could carry a credential or a real user's data must not end up
+# in a layer. `docker build` sends the whole build context to the daemon, so a
+# file that is merely present -- and gitignored -- is still copied and cached.
+# Rule of thumb: if it is secret, personal, or expensive, exclude it.
+
+# Version control and editor noise
 .git
 .gitignore
+.github
+.idea
+.vscode
+*.swp
+
+# Documentation and local tooling caches
 *.md
 __pycache__
+**/__pycache__
 *.pyc
+*.pyo
 .pytest_cache
-backend/.env
+.mypy_cache
+.ruff_cache
+.venv
+venv
+env
+
+# Secrets and local configuration. These are the reason this file exists:
+# a .env baked into an image is readable by anyone who can pull it.
+**/.env
+**/.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+**/service-account*.json
+**/credentials*.json
+secrets/
+
+# Real user data. Never bake a database dump or a private KYC document in.
+**/*.sqlite
+**/*.sqlite3
+**/*.dump
 backend/uploads
+backend/private
+uploads/
+private/
+*.log
 server.log
 server.err
 static.log
 static.err
+
+# Test and CI configuration
+backend/tests
+pytest.ini
+tox.ini

@@ -4,10 +4,13 @@ Only users whose role is 'admin' or 'support' (set server-side) may access.
 Role values are never read from the client.
 """
 
+import uuid
+
 from flask import Blueprint, current_app, g, request
 
 from ..db import get_db, to_object_id, utcnow
 from ..errors import APIError
+from ..ledger import CURRENCY
 from ..ratelimit import rate_limit
 from ..security import require_admin
 from ..serializers import admin_user
@@ -17,15 +20,56 @@ from ..validators import as_str, body, require_fields
 bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
 
-def _audit(action, actor_id, target_type=None, target_id=None, meta=None):
-    get_db().audit_logs.insert_one({
-        "action": action,
-        "actor_id": actor_id,
-        "target_type": target_type,
-        "target_id": str(target_id) if target_id else None,
-        "meta": meta or {},
-        "created_at": utcnow(),
-    })
+def _audit(action, actor_id, target_type=None, target_id=None, meta=None,
+           reason=None):
+    """Write an audit row through the shared module.
+
+    Not a direct insert: the audit module validates the action against its domain
+    and redacts the payload. Writing straight to the collection skipped both, so
+    a secret passed in `meta` would have been stored in the clear.
+    """
+    from .. import audit
+
+    return audit.record(action, domain=action.split(".", 1)[0], actor_id=actor_id,
+                        actor_role=getattr(g, "user", {}).get("role", "admin"),
+                        target_type=target_type, target_id=target_id,
+                        meta=meta or {}, reason=reason)
+
+
+def _record_reconciliation(actor_id, issues, info, db):
+    """Persist an immutable snapshot of a reconciliation run.
+
+    Returning a report is not the same as recording one. Without a stored run,
+    "the books balanced" is unfalsifiable after the fact: there is no evidence a
+    check ever ran, and no way to see that today's clean result was not also
+    clean last month. The snapshot is append-only and carries the counts it was
+    computed from, so a later run can be compared against an earlier one.
+    """
+    from .. import audit
+
+    now = utcnow()
+    run = {
+        "run_id": "REC-" + uuid.uuid4().hex[:12],
+        "ran_at": now,
+        "ran_by": str(actor_id) if actor_id is not None else None,
+        "status": "balanced" if not issues else "attention",
+        "issue_count": len(issues),
+        "issues": issues,
+        "info": info,
+    }
+    try:
+        db.reconciliations.insert_one(dict(run))
+    except Exception:  # noqa: BLE001 - a snapshot failure must not fail the report
+        current_app.logger.warning("could not store the reconciliation run",
+                                   exc_info=True)
+    audit.record("financial.reconcile", domain=audit.FINANCIAL, actor_id=actor_id,
+                 actor_role="admin", target_type="reconciliation",
+                 target_id=run["run_id"],
+                 meta={"status": run["status"], "issue_count": len(issues),
+                       "gmv": info.get("gmv"),
+                       "payouts_total": info.get("payouts_total")})
+    return {"id": run["run_id"], "ran_at": iso_utc(now), "status": run["status"],
+            "issue_count": len(issues)}
 
 
 def _clean_payout(p, now=None):
@@ -172,7 +216,7 @@ def set_role(uid):
     if role in ("admin", "support") and g.user.get("role") not in ("admin",):
         raise APIError("Only an admin can grant staff roles.", 403, code="forbidden")
     db.users.update_one({"_id": target["_id"]}, {"$set": {"role": role, "updated_at": utcnow()}})
-    _audit("user.role_change", g.user["_id"], "user", target["_id"],
+    _audit("admin.user.role_change", g.user["_id"], "user", target["_id"],
            {"from": target.get("role"), "to": role})
     fresh = db.users.find_one({"_id": target["_id"]})
     return {"ok": True, "user": admin_user(fresh)}
@@ -302,8 +346,28 @@ def reconcile():
     info["refunds_processed"] = len(processed_refunds)
     info["payouts_total"] = len(payouts)
 
-    return {"ok": True, "status": "balanced" if not issues else "attention",
-            "issues": issues, "info": info}
+    # One currency throughout. If a row ever disagrees, the sums above are
+    # meaningless -- so it is an issue in its own right rather than a footnote.
+    mixed = [str(p.get("_id")) for p in captured_payments
+             if (p.get("currency") or CURRENCY) != CURRENCY]
+    if mixed:
+        issues.append({"kind": "mixed_currency", "severity": "high",
+                       "detail": "%d payment(s) not in %s" % (len(mixed), CURRENCY),
+                       "sample": mixed[:20]})
+    mixed_payouts = [str(p.get("_id")) for p in payouts
+                     if (p.get("currency") or CURRENCY) != CURRENCY]
+    if mixed_payouts:
+        issues.append({"kind": "mixed_currency", "severity": "high",
+                       "detail": "%d payout(s) not in %s" % (len(mixed_payouts), CURRENCY),
+                       "sample": mixed_payouts[:20]})
+
+    result = {
+        "status": "balanced" if not issues else "attention",
+        "issues": issues,
+        "info": info,
+        "run": _record_reconciliation(g.user["_id"], issues, info, db),
+    }
+    return {"ok": True, **result}
 
 
 @bp.get("/audit")
@@ -405,7 +469,7 @@ def create_payout():
             raise APIError("This driver has no outstanding payable.", 422, code="no_balance")
 
         payout = new_payout(user_id, amount, booking_ids=_unsettled_bookings(db, user_id))
-        _audit("payout.create", g.user["_id"], "user", user_id,
+        _audit("financial.payout.create", g.user["_id"], "user", user_id,
                {"amount": payout["amount"], "payout_id": str(payout["_id"])})
         return {"ok": True, "payout": _clean_payout(payout)}
     finally:
@@ -447,7 +511,7 @@ def submit_payout(pid):
     db = get_db()
     payout_id = to_object_id(pid, "payout")
     payout = _submit(payout_id)
-    _audit("payout.submit", g.user["_id"], "payout", payout_id,
+    _audit("financial.payout.submit", g.user["_id"], "payout", payout_id,
            {"status": payout.get("status")})
     return {"ok": True, "payout": _clean_payout(payout)}
 
@@ -470,7 +534,7 @@ def review_vehicle(vid):
     data = body()
     reason = as_str(data.get("reason"), "reason", max_len=300) or None
     vehicle = _review(vehicle_id, data.get("decision"), str(g.user["_id"]), reason)
-    _audit("vehicle.verify", g.user["_id"], "vehicle", vehicle_id,
+    _audit("identity.vehicle.verify", g.user["_id"], "vehicle", vehicle_id,
            {"to": vehicle.get("verification_status"), "reason": reason})
     return {"ok": True,
             "vehicle": {"id": str(vehicle["_id"]),
@@ -516,7 +580,7 @@ def confirm_payout(pid):
             422, code="payout_reference_required")
 
     if payout.get("provider", "manual") != "manual":
-        _audit("payout.confirm_refused", g.user["_id"], "payout", payout_id,
+        _audit("financial.payout.confirm_refused", g.user["_id"], "payout", payout_id,
                {"provider": payout.get("provider"), "reason": "non_manual_provider"})
         raise APIError(
             "This payout is settled by the payment provider and cannot be "
@@ -528,14 +592,14 @@ def confirm_payout(pid):
                                  "provider_reference": reference,
                                  "_id": {"$ne": payout_id}})
     if clash:
-        _audit("payout.confirm_refused", g.user["_id"], "payout", payout_id,
+        _audit("financial.payout.confirm_refused", g.user["_id"], "payout", payout_id,
                {"reason": "duplicate_reference", "reference": reference})
         raise APIError(
             "That bank reference is already recorded against another payout.",
             409, code="payout_reference_in_use")
 
     settled = _confirm(payout_id, reference, source="manual")
-    _audit("payout.confirm", g.user["_id"], "payout", payout_id,
+    _audit("financial.payout.confirm", g.user["_id"], "payout", payout_id,
            {"provider_reference": reference, "amount": payout.get("amount"),
             "status": settled.get("status")})
     return {"ok": True, "payout": _clean_payout(db.payouts.find_one({"_id": payout_id}))}
@@ -551,7 +615,7 @@ def retry_payout(pid):
     db = get_db()
     payout_id = to_object_id(pid, "payout")
     payout = _retry(payout_id)
-    _audit("payout.retry", g.user["_id"], "payout", payout_id, {})
+    _audit("financial.payout.retry", g.user["_id"], "payout", payout_id, {})
     return {"ok": True, "payout": _clean_payout(payout)}
 
 
@@ -573,7 +637,7 @@ def void_payout_route(pid):
     data = body()
     reason = as_str(data.get("reason"), "reason", max_len=200) or "Voided by admin"
     payout = _void(payout_id, reason)
-    _audit("payout.void", g.user["_id"], "payout", payout_id, {"reason": reason})
+    _audit("financial.payout.void", g.user["_id"], "payout", payout_id, {"reason": reason})
     return {"ok": True, "payout": _clean_payout(db.payouts.find_one({"_id": payout_id}))}
 
 
@@ -618,6 +682,6 @@ def advance_payout(pid):
         raise APIError("Invalid payout status.", 422, code="validation_error",
                        details={"allowed": ["failed", "pending"]})
 
-    _audit("payout.update", g.user["_id"], "payout", payout_id, {"to": payout.get("status")})
+    _audit("financial.payout.update", g.user["_id"], "payout", payout_id, {"to": payout.get("status")})
     fresh = db.payouts.find_one({"_id": payout_id})
     return {"ok": True, "payout": _clean_payout(fresh)}

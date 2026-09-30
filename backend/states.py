@@ -79,6 +79,12 @@ BOOKING_REFUND_PENDING = "refund_pending"
 BOOKING_REFUNDED = "refunded"
 BOOKING_NO_SHOW = "no_show"
 BOOKING_COMPLETED = "completed"
+# Driver has finished the trip; the passenger has not confirmed it yet. The
+# money is collected and ledgered but NOT payable -- see completion.py.
+BOOKING_AWAITING_COMPLETION = "awaiting_completion"
+# The passenger disputed the trip. Terminal for settlement purposes: earnings
+# are held until an admin resolves it.
+BOOKING_DISPUTED = "disputed"
 
 BOOKING_STATES = {
     BOOKING_PENDING_PAYMENT,
@@ -88,12 +94,18 @@ BOOKING_STATES = {
     BOOKING_REFUNDED,
     BOOKING_NO_SHOW,
     BOOKING_COMPLETED,
+    BOOKING_AWAITING_COMPLETION,
+    BOOKING_DISPUTED,
 }
 
 # Booking states that are terminal.
 _BOOKING_TERMINAL = {BOOKING_REFUNDED, BOOKING_NO_SHOW, BOOKING_COMPLETED}
 
-_BOOKING_CONSUMES_SEATS = {BOOKING_PENDING_PAYMENT, BOOKING_CONFIRMED}
+# Terminal for the *ride*, but still open for confirmation/dispute.
+_BOOKING_SETTLED = {BOOKING_COMPLETED, BOOKING_DISPUTED}
+
+_BOOKING_CONSUMES_SEATS = {BOOKING_PENDING_PAYMENT, BOOKING_CONFIRMED,
+                           BOOKING_AWAITING_COMPLETION}
 
 _BOOKING_TRANSITIONS = {
     BOOKING_PENDING_PAYMENT: {
@@ -103,9 +115,20 @@ _BOOKING_TRANSITIONS = {
     BOOKING_CONFIRMED: {
         BOOKING_REFUND_PENDING,   # user/driver cancellation too close to departure
         BOOKING_CANCELLED,        # cancellation with full refund
-        BOOKING_COMPLETED,        # trip finished
+        BOOKING_AWAITING_COMPLETION,  # driver finished the trip
         BOOKING_NO_SHOW,
-        BOOKING_REFUNDED,
+    },
+    # The confirmation window. A booking can only leave this state by being
+    # confirmed (passenger or auto-complete) or disputed, or by being
+    # cancelled/refunded if the admin resolves a dispute that way.
+    BOOKING_AWAITING_COMPLETION: {
+        BOOKING_COMPLETED,        # passenger confirmed, or auto-confirmed
+        BOOKING_DISPUTED,         # passenger raised a dispute
+        BOOKING_REFUND_PENDING,
+    },
+    BOOKING_DISPUTED: {
+        BOOKING_COMPLETED,        # dispute resolved in the driver's favour
+        BOOKING_REFUND_PENDING,   # dispute resolved with a refund
     },
     BOOKING_REFUND_PENDING: {BOOKING_REFUNDED, BOOKING_CANCELLED},
     BOOKING_CANCELLED: set(),
@@ -117,6 +140,32 @@ _BOOKING_TRANSITIONS = {
 
 def can_transition_booking(source, target):
     return target in _BOOKING_TRANSITIONS.get(source, set())
+
+
+def is_booking_terminal(status):
+    """No further transition is possible from here."""
+    return status in _BOOKING_TERMINAL
+
+
+def is_ride_over(status):
+    """The trip itself is over, whether or not money is free to move.
+
+    Distinct from `is_booking_terminal`: a disputed booking is over but still
+    open to an admin decision, so treating it as terminal would make the
+    resolution path unreachable.
+    """
+    return status in _BOOKING_SETTLED
+
+
+def booking_blocks_settlement(status):
+    """Earnings are held in this state and must not be paid out.
+
+    The single place that answers "may this booking's money move?". Anything
+    added here must also be representable in the completion state machine in
+    `completion.py`, and payout creation must consult `completion.is_payable`.
+    """
+    return status in {BOOKING_AWAITING_COMPLETION, BOOKING_DISPUTED,
+                      BOOKING_PENDING_PAYMENT, BOOKING_REFUND_PENDING}
 
 
 def booking_consumes_seats(status):

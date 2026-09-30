@@ -17,16 +17,101 @@ A full payment then full refund nets every account to zero.
 
 import uuid
 
+from pymongo.errors import DuplicateKeyError
+
 from .db import get_db, utcnow
+from .errors import APIError
+
+# The service prices, collects, refunds and pays in exactly one currency.
+#
+# Every amount in the ledger, on a payment, or in a payout is in this unit, and
+# nothing in the money path is allowed to add the amounts of two different ones.
+# A mixed-currency sum is not a rounding error: it is a wrong number that looks
+# like a right one, so the currency is checked where a value enters the system
+# rather than trusted from whatever the caller passed.
+CURRENCY = "INR"
+
+# Currencies the service would have to explicitly support. Kept as a set so
+# adding one is a deliberate edit here, and so the rejection message can say
+# what is supported instead of just refusing.
+SUPPORTED_CURRENCIES = frozenset({"INR"})
+
+
+def assert_currency(currency, *, field="currency"):
+    """Reject anything the service cannot correctly account for.
+
+    A missing value is accepted as the default, because the overwhelming
+    majority of rows predate the field and backfilling them is not worth a
+    migration. A value that is present and wrong is refused.
+    """
+    if currency is None or currency == "":
+        return CURRENCY
+    value = str(currency).strip().upper()
+    if value not in SUPPORTED_CURRENCIES:
+        raise APIError(
+            "Unsupported currency %r; this service accounts in %s."
+            % (currency, ", ".join(sorted(SUPPORTED_CURRENCIES))),
+            422, code="unsupported_currency",
+            details={"field": field, "currency": value,
+                     "supported": sorted(SUPPORTED_CURRENCIES)})
+    return value
 
 
 def _entry_id():
     return "ENT-" + uuid.uuid4().hex
 
 
+# The business key namespace. Every financial effect is named here, so the set
+# of things that can be posted exactly once is a short, reviewable list rather
+# than "whatever the caller remembered to guard".
+_BK = {
+    "payment_capture": "PAYMENT_CAPTURE",      # the passenger's gross
+    "platform_fee": "PLATFORM_FEE",            # our cut of one capture
+    "driver_payable": "DRIVER_PAYABLE",        # what one capture owes a driver
+    "refund_gross": "REFUND_GROSS",            # money back to the passenger
+    "refund_fee": "REFUND_FEE_REVERSAL",       # our cut given back
+    "refund_payable": "REFUND_PAYABLE_REVERSAL",  # driver's claim given back
+    "payout": "DRIVER_PAYOUT",                 # money out to a driver
+}
+
+
+def business_key(kind, *parts):
+    """A deterministic, unique name for one financial effect.
+
+    The point is that the same effect always produces the same string, so a
+    retry -- a duplicated webhook, a re-run worker, a double-clicked button --
+    collides on a unique index instead of silently double-posting. Guarding this
+    in application code is not enough, because the guards themselves race; this
+    makes the database the arbiter.
+
+    Returns None when a part is missing rather than building a key out of
+    ``None``: a key that is only accidentally unique is worse than no key,
+    because it looks like protection.
+    """
+    prefix = _BK.get(kind)
+    if not prefix:
+        raise ValueError("unknown ledger business key %r" % (kind,))
+    for part in parts:
+        if part is None or str(part) == "":
+            return None
+    return ":".join([prefix] + [str(p) for p in parts])
+
+
 def post_entry(*, account_id, account_type, entry_type, amount, booking_id=None,
-               payment_id=None, refund_id=None, reference=None, currency="INR", meta=None):
-    """Append an immutable ledger entry. `amount` is signed (credit +, debit -)."""
+               payment_id=None, refund_id=None, reference=None, currency=CURRENCY,
+               business_key=None, meta=None):
+    """Append an immutable ledger entry. `amount` is signed (credit +, debit -).
+
+    The currency is validated on the way in: a ledger that holds two units
+    cannot be summed, and the sum is what settlement and reconciliation read.
+
+    `business_key` makes the append idempotent at the database level. When one is
+    supplied and an entry with that key already exists, nothing is written and
+    the existing entry is returned with `posted=False` -- so a caller can retry
+    freely without double-counting, and can still tell whether this call was the
+    one that actually moved the books.
+    """
+    currency = assert_currency(currency)
     db = get_db()
     doc = {
         "entry_id": _entry_id(),
@@ -39,11 +124,25 @@ def post_entry(*, account_id, account_type, entry_type, amount, booking_id=None,
         "payment_id": str(payment_id) if payment_id else None,
         "refund_id": str(refund_id) if refund_id else None,
         "reference": reference or None,
+        "business_key": business_key or None,
         "meta": meta or {},
         "created_at": utcnow(),
     }
-    db.ledger_entries.insert_one(doc)
-    return doc
+    try:
+        db.ledger_entries.insert_one(doc)
+        doc["posted"] = True
+        return doc
+    except DuplicateKeyError:
+        if not business_key:
+            # The only unique index on this collection is on `entry_id`, which
+            # is a fresh uuid, so this should be unreachable. Surfacing it is
+            # better than silently swallowing a write failure.
+            raise
+        existing = db.ledger_entries.find_one({"business_key": business_key})
+        if existing is None:
+            raise
+        existing["posted"] = False
+        return existing
 
 
 def fee_config():
@@ -94,7 +193,7 @@ def quote_commission(gross_amount):
         "platform_fee": fee,
         "driver_net": net,
         "commission_rate_percent": float(pct),
-        "currency": "INR",
+        "currency": CURRENCY,
     }
 
 
@@ -128,6 +227,11 @@ def record_payment_ledger(booking, payment):
     The split comes from the values frozen on the payment at order creation, so
     the ledger always satisfies gross == fee + net for that exact transaction
     even if the platform commission changed afterwards.
+
+    Each of the three entries carries a business key derived from the payment
+    id, so calling this again for the same capture posts nothing. That matters
+    because both the browser callback and the gateway webhook can settle the
+    same payment, and in either order.
     """
     split = commission_for_payment(payment)
     gross = split["gross"]
@@ -139,17 +243,21 @@ def record_payment_ledger(booking, payment):
         "driver_net": net,
         "commission_rate_percent": split["commission_rate_percent"],
     }
+    pid = payment.get("_id")
     post_entry(account_id="PLATFORM", account_type="platform", entry_type="PLATFORM_FEE",
-               amount=-fee, booking_id=booking["_id"], payment_id=payment.get("_id"),
-               reference=payment.get("reference"), meta=dict(meta))
+               amount=-fee, booking_id=booking["_id"], payment_id=pid,
+               reference=payment.get("reference"), meta=dict(meta),
+               business_key=business_key("platform_fee", pid))
     post_entry(account_id=booking["owner_id"], account_type="driver",
                entry_type="DRIVER_PAYABLE", amount=net,
-               booking_id=booking["_id"], payment_id=payment.get("_id"),
-               reference=payment.get("reference"), meta=dict(meta))
+               booking_id=booking["_id"], payment_id=pid,
+               reference=payment.get("reference"), meta=dict(meta),
+               business_key=business_key("driver_payable", pid))
     post_entry(account_id=booking["rider_id"], account_type="passenger",
                entry_type="PASSENGER_PAYMENT", amount=gross,
-               booking_id=booking["_id"], payment_id=payment.get("_id"),
-               reference=payment.get("reference"), meta=dict(meta))
+               booking_id=booking["_id"], payment_id=pid,
+               reference=payment.get("reference"), meta=dict(meta),
+               business_key=business_key("payment_capture", pid))
 
 
 def _original_payment_fee(booking_id):
@@ -187,18 +295,22 @@ def record_refund_ledger(booking, refund):
         return  # nothing was ledgered for this payment -> nothing to reverse
     fee = round(taken_fee * ratio, 2)
     net = round(gross - fee, 2)
+    rid = refund.get("_id")
     post_entry(account_id="PLATFORM", account_type="platform",
                entry_type="PLATFORM_FEE_REVERSAL", amount=fee,
                booking_id=booking["_id"], payment_id=refund.get("payment_id"),
-               refund_id=refund.get("_id"), reference=refund.get("reference"))
+               refund_id=rid, reference=refund.get("reference"),
+               business_key=business_key("refund_fee", rid))
     post_entry(account_id=booking["owner_id"], account_type="driver",
                entry_type="DRIVER_PAYABLE_REVERSAL", amount=-net,
                booking_id=booking["_id"], payment_id=refund.get("payment_id"),
-               refund_id=refund.get("_id"), reference=refund.get("reference"))
+               refund_id=rid, reference=refund.get("reference"),
+               business_key=business_key("refund_payable", rid))
     post_entry(account_id=booking["rider_id"], account_type="passenger",
                entry_type="PASSENGER_REFUND", amount=-gross,
                booking_id=booking["_id"], payment_id=refund.get("payment_id"),
-               refund_id=refund.get("_id"), reference=refund.get("reference"))
+               refund_id=rid, reference=refund.get("reference"),
+               business_key=business_key("refund_gross", rid))
 
 
 def account_balance(account_id, account_type):

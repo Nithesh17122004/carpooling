@@ -23,7 +23,8 @@ MODULES = [
     "users", "vehicles", "rides", "bookings", "payments", "refunds",
     "ledger_entries", "payouts", "refresh_tokens", "notifications",
     "notification_preferences", "locations", "audit_logs", "ratings",
-    "blocks", "reports", "webhook_events",
+    "blocks", "reports", "webhook_events", "reconciliations",
+    "payment_reconciliations",
 ]
 
 
@@ -115,17 +116,120 @@ def auth(resp):
 
 
 @pytest.fixture
-def driver(client, db):
-    user = _make_user(db, "Driver One", "driver@test.in")
-    resp = login(client, "driver@test.in")
-    return {"user": user, "auth": auth(resp), "token": token_of(resp)}
-
-
-@pytest.fixture
 def rider(client, db):
     user = _make_user(db, "Rider One", "rider@test.in")
     resp = login(client, "rider@test.in")
     return {"user": user, "auth": auth(resp), "token": token_of(resp)}
+
+
+def _make_driver(db, client, name, email):
+    """Create a user and promote them the way the product actually does.
+
+    Nobody self-declares a role: registration creates a plain `user`, and an
+    admin has to call PATCH /api/admin/users/<uid>/role. Tests that build a
+    "driver" without doing that are testing a user, and any gate keyed on the
+    driver role will quietly 403 them.
+    """
+    user = _make_user(db, name, email)
+    admin = _make_user(db, f"{name} Admin", f"admin-for-{email}", role="admin")
+    tok = auth(login(client, f"admin-for-{email}"))
+    resp = client.patch(f"/api/admin/users/{user['_id']}/role", headers=tok,
+                        json={"role": "driver"})
+    assert resp.status_code == 200, resp.get_json()
+    del admin
+    return db.users.find_one({"_id": user["_id"]})
+
+
+@pytest.fixture
+def driver(app, client, db):
+    """The default test driver: onboarded, KYC-clear and able to be paid.
+
+    Payout creation is gated on verified payout onboarding, so a driver without
+    it cannot reach the money path at all. Making the *default* driver onboarded
+    keeps the shared fixture a realistic happy-path driver instead of forcing
+    every payout test to opt in. Tests that exercise the gate itself use
+    `driver_without_onboarding`, so the gate stays genuinely active rather than
+    being quietly disabled for the suite.
+    """
+    user = _make_driver(db, client, "Driver One", "driver@test.in")
+    resp = login(client, "driver@test.in")
+    handle = {"user": user, "auth": auth(resp), "token": token_of(resp)}
+    _complete_onboarding(app, user["_id"])
+    return handle
+
+
+@pytest.fixture
+def driver_without_onboarding(app, client, db):
+    """A driver who has NOT set up a payout account.
+
+    Used to assert that the settlement gate actually refuses to pay. Kept
+    separate from `driver` so the refusal is proven by a test rather than
+    assumed because the default fixture happens to be onboarded.
+    """
+    user = _make_driver(db, client, "Driver No Onboarding",
+                        "driver-no-onboarding@test.in")
+    resp = login(client, "driver-no-onboarding@test.in")
+    return {"user": user, "auth": auth(resp), "token": token_of(resp)}
+
+
+def _complete_onboarding(app, user_id):
+    """Drive the real onboarding state machine to `verified`.
+
+    Uses the module's own transitions rather than writing the status directly, so
+    a broken transition fails here instead of being masked by a fixture.
+    """
+    from backend import onboarding
+
+    with app.app_context():
+        onboarding.begin_onboarding(user_id, account_last4="1234")
+        onboarding.submit_onboarding(user_id, contact_id="cont_TEST",
+                                     linked_account_id="la_TEST")
+        onboarding.verify_onboarding(user_id, reviewer_id="admin-test")
+
+
+def satisfy_other_publish_gates(db, user_id, vehicle_id, *, vehicle_kyc=True):
+    """Clear the publish gates a caller did not come here to test.
+
+    Publication requires three independent things: a verified driver identity, a
+    verified vehicle (DL + insurance), and an approved RC. A test focused on one
+    of them must clear the others, or its publish assertion 403s for an
+    unrelated reason and proves nothing.
+
+    `vehicle_kyc=False` leaves the vehicle gate alone, for the tests that are
+    specifically about it.
+    """
+    from bson import ObjectId
+
+    from backend.timeutil import utc_now
+
+    db.users.update_one({"_id": user_id}, {"$set": {
+        "kyc_status": "verified",
+        "kyc_reviewed_at": utc_now(),
+        "kyc_reviewed_by": "admin-test",
+    }})
+    fields = {
+        "rc_document": {
+            "doc_id": "rctest",
+            "key": "private/rc/%s/rctest.pdf" % user_id,
+            "content_type": "application/pdf",
+            "size": 1,
+            "encrypted": False,
+            "uploaded_at": utc_now(),
+            "verification_status": "approved",
+            "reviewed_at": utc_now(),
+            "reviewed_by": "admin-test",
+            "reason": None,
+        },
+    }
+    if vehicle_kyc:
+        fields["verification_status"] = "verified"
+    db.vehicles.update_one({"_id": ObjectId(str(vehicle_id))}, {"$set": fields})
+
+
+@pytest.fixture
+def onboarded_driver(app, driver):
+    """Explicit alias: reads better than `driver` in payout-focused tests."""
+    return driver
 
 
 @pytest.fixture
@@ -138,14 +242,14 @@ def vehicle(driver, client, db):
     })
     assert resp.status_code == 201, resp.get_json()
     vid = resp.get_json()["vehicle"]["id"]
-    # Most tests exercise the ordinary (verified) driver path. The KYC gate is
-    # covered directly in test_kyc.py; marking the shared fixture verified here
-    # keeps the gate genuinely active for the rest of the suite rather than
-    # quietly disabling it.
-    from bson import ObjectId
-
-    db.vehicles.update_one({"_id": ObjectId(vid)},
-                           {"$set": {"verification_status": "verified"}})
+    # Ride publication is gated on THREE independent facts: the driver is
+    # verified, the vehicle (DL + insurance) is verified, and the RC is approved.
+    # Most tests exercise the ordinary compliant path, so the shared fixtures are
+    # made compliant here. Each gate is covered directly in test_kyc.py,
+    # test_identity_kyc.py and test_rc.py -- marking them satisfied in the shared
+    # fixture keeps the gates genuinely active for the rest of the suite rather
+    # than quietly disabling them.
+    satisfy_other_publish_gates(db, driver["user"]["_id"], vid)
     return resp.get_json()["vehicle"]
 
 

@@ -56,19 +56,26 @@ _SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; "
 
+        # Without this, an injected <base> tag silently rewrites every relative
+        # URL on the page -- including the API calls that carry money.
+        "base-uri 'none'; "
+
         # JavaScript
         "script-src "
         "'self' "
         "'unsafe-inline' "
         "https://unpkg.com "
-        "https://accounts.google.com; "
+        "https://accounts.google.com "
+        # Razorpay Checkout.js is loaded from the provider, not bundled.
+        "https://checkout.razorpay.com; "
 
         # Explicit script element policy
         "script-src-elem "
         "'self' "
         "'unsafe-inline' "
         "https://unpkg.com "
-        "https://accounts.google.com; "
+        "https://accounts.google.com "
+        "https://checkout.razorpay.com; "
 
         # CSS
         "style-src "
@@ -95,12 +102,17 @@ _SECURITY_HEADERS = {
         "'self' "
         "https://accounts.google.com "
         "https://www.googleapis.com "
-        "https://*.googleapis.com; "
+        "https://*.googleapis.com "
+        # The checkout iframe and the order/verify calls leave the origin here.
+        "https://api.razorpay.com "
+        "https://checkout.razorpay.com; "
 
-        # Google Sign-In popup/iframe
+        # Google Sign-In popup/iframe, and the Razorpay payment modal.
         "frame-src "
         "'self' "
-        "https://accounts.google.com; "
+        "https://accounts.google.com "
+        "https://api.razorpay.com "
+        "https://checkout.razorpay.com; "
 
         # Web workers
         "worker-src "

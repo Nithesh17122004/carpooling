@@ -29,7 +29,7 @@ def _booking(client, db, driver, rider, vehicle, fare=100):
 
 
 @pytest.fixture
-def fake_razorpay(monkeypatch):
+def fake_razorpay(app, monkeypatch):
     """Point payments at a fake gateway that records every call.
 
     Returns a small handle so a test can inspect `calls` or swap in a failing
@@ -75,6 +75,11 @@ def fake_razorpay(monkeypatch):
     monkeypatch.setattr(payments_mod, "_provider", lambda: "razorpay")
     monkeypatch.setattr(payments_mod, "_idp_key", lambda: uuid.uuid4().hex)
     monkeypatch.setattr(payments_mod, "assert_checkout_ready", lambda: None)
+    # The publishable KEY_ID is required to build a Razorpay checkout payload
+    # (it identifies the app, it cannot move money), so a fake-gateway test must
+    # supply one. Without it every booking here 502s on `payments_unconfigured`
+    # before the concurrency logic under test is ever reached.
+    monkeypatch.setitem(app.config, "RAZORPAY_KEY_ID", "rzp_test_fake_key")
     return gateway
 
 

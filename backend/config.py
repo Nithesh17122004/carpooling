@@ -116,7 +116,13 @@ class Config:
     RAZORPAY_KEY_ID = _env("PAYMENT_KEY_ID", "") or _env("RAZORPAY_KEY_ID", "")
     RAZORPAY_KEY_SECRET = _env("PAYMENT_KEY_SECRET", "") or _env("RAZORPAY_KEY_SECRET", "")
     RAZORPAY_WEBHOOK_SECRET = _env("RAZORPAY_WEBHOOK_SECRET", "")
-    PAYMENT_PROVIDER="razorpay"  # demo | razorpay
+    # Read from the environment like every other provider setting. This was
+    # previously a hardcoded literal, which silently ignored PAYMENT_PROVIDER
+    # from backend/.env and forced `razorpay` on every deployment -- including
+    # local/test runs that had no keys, so order creation failed closed with
+    # `payments_unconfigured`. `razorpay` stays the default because it is the
+    # only provider allowed in production.
+    PAYMENT_PROVIDER = _env("PAYMENT_PROVIDER", "razorpay")  # razorpay | demo
     PAYMENT_WEBHOOK_PATH = _env("PAYMENT_WEBHOOK_PATH", "/api/payments/webhook")
     # Payout provider: `manual` (staff settle, confirmed out of band) or
     # `razorpayx` (RazorpayX linked account). Either way only a provider
@@ -160,6 +166,61 @@ class Config:
 
     # Payout reservation lock (seconds before a concurrent creation can retry)
     PAYOUT_LOCK_TTL_SECONDS = _env_int("PAYOUT_LOCK_TTL_SECONDS", 60)
+
+    # ------------------------------------------------ driver payout onboarding
+    # The payout onboarding state machine lives in onboarding.py. Only the
+    # provider's own opaque account identifier is ever persisted: no account
+    # number, IFSC, UPI id, card or token is stored by this service.
+    PAYOUT_ONBOARDING_REQUIRED = _env_bool("PAYOUT_ONBOARDING_REQUIRED", True)
+    # When the provider marks onboarding `submitted` rather than instantly
+    # `verified`, a human reviewer must approve it before settlement is allowed.
+    PAYOUT_ONBOARDING_MANUAL_REVIEW = _env_bool("PAYOUT_ONBOARDING_MANUAL_REVIEW", True)
+    # RazorpayX linked-account creation is normally done in the Razorpay
+    # dashboard; when this is on, the service may create a Contact + Linked
+    # Account through the API.
+    RAZORPAYX_CONTACT_ID = _env("RAZORPAYX_CONTACT_ID", "")
+
+    # ------------------------------------------------------ settlement worker
+    # The worker runs as a SEPARATE Render background worker process, never
+    # inside the web dyno (an in-web infinite loop starves request handling and
+    # is killed on every deploy). `python -m backend.worker` is the entry point.
+    SETTLEMENT_ENABLED = _env_bool("SETTLEMENT_ENABLED", True)
+    SETTLEMENT_POLL_SECONDS = _env_int("SETTLEMENT_POLL_SECONDS", 20)
+    SETTLEMENT_BATCH_SIZE = _env_int("SETTLEMENT_BATCH_SIZE", 25)
+    # How long a worker may hold a claimed job before another worker may steal
+    # it. A crashed worker's jobs therefore recover instead of stalling.
+    SETTLEMENT_CLAIM_TTL_SECONDS = _env_int("SETTLEMENT_CLAIM_TTL_SECONDS", 300)
+    SETTLEMENT_MAX_ATTEMPTS = _env_int("SETTLEMENT_MAX_ATTEMPTS", 5)
+    SETTLEMENT_RETRY_BASE_SECONDS = _env_int("SETTLEMENT_RETRY_BASE_SECONDS", 30)
+    # A completed ride is not paid out until the passenger has confirmed (or the
+    # auto-confirm window has closed) AND this grace period has elapsed.
+    SETTLEMENT_MIN_AGE_SECONDS = _env_int("SETTLEMENT_MIN_AGE_SECONDS", 0)
+    # Dry run exercises the whole state machine with a provider stub that never
+    # moves money. Hard-refused in production.
+    PAYOUT_DRY_RUN = _env_bool("PAYOUT_DRY_RUN", False)
+
+    # ------------------------------------------------ passenger trip completion
+    # The driver says the trip finished; the passenger must confirm. Until they
+    # do (or the timeout lapses) the booking's earnings are NOT payout-eligible.
+    COMPLETION_CONFIRM_TIMEOUT_MINUTES = _env_int("COMPLETION_CONFIRM_TIMEOUT_MINUTES", 24 * 60)
+    # Require a verified passenger identity before a booking may be created.
+    PASSENGER_KYC_ENFORCE_BOOKING = _env_bool("PASSENGER_KYC_ENFORCE_BOOKING", False)
+
+    # --------------------------------------------------------------- documents
+    # Aadhaar / identity / RC documents are encrypted at rest with
+    # DOCUMENT_ENCRYPTION_KEY (32 bytes, urlsafe-base64 or hex). When it is
+    # absent, encryption is disabled and only available in non-production, so a
+    # production deployment cannot quietly store identity papers in plaintext.
+    DOCUMENT_ENCRYPTION_KEY = _env("DOCUMENT_ENCRYPTION_KEY", "")
+    DOCUMENT_MAX_SIZE_MB = _env_int("DOCUMENT_MAX_SIZE_MB", 8)
+    # Only these identity document types are accepted for KYC.
+    KYC_IDENTITY_DOC_TYPES = ("aadhaar", "passport", "voter_id", "dl")
+
+    # Publishing requires BOTH an approved vehicle and an approved driver
+    # identity. Kept separate from KYC_ENFORCE_PUBLISH (the vehicle control) so
+    # either can be relaxed in local development without disabling both.
+    DRIVER_KYC_ENFORCE_PUBLISH = _env_bool("DRIVER_KYC_ENFORCE_PUBLISH", True)
+    RC_VERIFY_ENFORCE_PUBLISH = _env_bool("RC_VERIFY_ENFORCE_PUBLISH", True)
 
     # Booking / rides
     RIDE_OVERLAP_BUFFER_MINUTES = _env_int("RIDE_OVERLAP_BUFFER_MINUTES", 30)
@@ -239,6 +300,8 @@ def validate_runtime(app_config) -> None:
         problems.append("SECRET_KEY/APP_SECRET")
     if app_config.get("PAYMENT_PROVIDER") == "demo":
         problems.append("PAYMENT_PROVIDER=demo is not allowed (set PAYMENT_PROVIDER=razorpay)")
+    if app_config.get("PAYMENT_PROVIDER") not in ("razorpay", "demo"):
+        problems.append("PAYMENT_PROVIDER must be 'razorpay' or 'demo'")
     if app_config.get("PAYMENT_PROVIDER") == "razorpay":
         if _placeholder(app_config.get("RAZORPAY_KEY_ID")):
             problems.append("RAZORPAY_KEY_ID")
@@ -246,6 +309,65 @@ def validate_runtime(app_config) -> None:
             problems.append("RAZORPAY_KEY_SECRET")
         if _placeholder(app_config.get("RAZORPAY_WEBHOOK_SECRET")):
             problems.append("RAZORPAY_WEBHOOK_SECRET")
+
+    # Payout provider must be one this build actually implements. An unknown
+    # value would otherwise fall through to the `manual` branch at dispatch
+    # time, i.e. silently degrade to "a human sends the money".
+    #
+    # An *absent* key is not an error: `Config` supplies "manual" as the
+    # default, so a caller passing a partial dict gets the safe branch anyway.
+    # Only an explicitly-set unrecognised value is a misconfiguration.
+    payout_provider = app_config.get("PAYOUT_PROVIDER")
+    if payout_provider and payout_provider not in ("manual", "razorpayx", "dryrun"):
+        problems.append("PAYOUT_PROVIDER must be 'manual', 'razorpayx' or 'dryrun'")
+    if payout_provider == "razorpayx" and _placeholder(
+            app_config.get("RAZORPAY_KEY_ID")):
+        # Deliberately NOT RAZORPAY_X_ACCOUNT_NUMBER. The destination account is
+        # per driver, taken from their verified onboarding record, so there is
+        # no single platform account number to require here. A deployment that
+        # still sets one is carrying a setting that no longer does anything --
+        # which is a misconfiguration worth flagging, because it suggests the
+        # code that used to pay everyone into it is still in someone's head.
+        problems.append("RAZORPAY_KEY_ID is required for PAYOUT_PROVIDER=razorpayx")
+    if payout_provider == "razorpayx" and app_config.get("RAZORPAY_X_ACCOUNT_NUMBER"):
+        problems.append(
+            "RAZORPAY_X_ACCOUNT_NUMBER is set but unused: payouts go to each "
+            "driver's own verified linked account, never a shared one. Remove it.")
+
+    # A dry-run provider must never reach production: it deliberately does not
+    # move money, so leaving it on would make every "settled" payout a fiction.
+    if app_config.get("PAYOUT_DRY_RUN"):
+        problems.append("PAYOUT_DRY_RUN must be false (it never moves real money)")
+    if payout_provider == "dryrun":
+        problems.append("PAYOUT_PROVIDER=dryrun is not allowed in production")
+
+    # Identity documents (Aadhaar/passport) and RC papers must be encrypted at
+    # rest, and `documents.py` refuses to store them unencrypted outside
+    # development. The boot-time half of that guarantee is required exactly when
+    # a production deployment enforces a gate that stores a private document --
+    # a deployment that turned those gates off is not asked for a key it will
+    # never use, but one enforcing them cannot boot without one.
+    stores_private_documents = bool(
+        app_config.get("DRIVER_KYC_ENFORCE_PUBLISH")
+        or app_config.get("RC_VERIFY_ENFORCE_PUBLISH")
+    )
+    if stores_private_documents and _placeholder(
+            app_config.get("DOCUMENT_ENCRYPTION_KEY")):
+        problems.append(
+            "DOCUMENT_ENCRYPTION_KEY is required (32 bytes, base64/hex) when a "
+            "private-document KYC gate is enforced")
+
+    # Commission is a frozen invariant. MIN_PLATFORM_FEE must stay 0, otherwise
+    # gross != fee + net for low fares and reconciliation breaks.
+    if float(app_config.get("MIN_PLATFORM_FEE", 0) or 0) != 0.0:
+        problems.append("MIN_PLATFORM_FEE must remain 0 (it breaks the 30% invariant)")
+    if float(app_config.get("PLATFORM_FEE_PERCENT", 30) or 0) <= 0:
+        problems.append("PLATFORM_FEE_PERCENT must be greater than 0")
+
+    if app_config.get("SETTLEMENT_ENABLED") is False:
+        problems.append(
+            "SETTLEMENT_ENABLED must stay true in production; driver earnings are "
+            "owed money and a deployment that never settles them is unlawful")
 
     # MongoDB must never point at localhost/shared defaults in production.
     try:

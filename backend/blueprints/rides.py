@@ -22,6 +22,7 @@ from ..errors import APIError
 from ..ratelimit import rate_limit
 from ..security import optional_auth, require_auth
 from ..states import (
+    BOOKING_AWAITING_COMPLETION,
     BOOKING_CANCELLED,
     BOOKING_COMPLETED,
     BOOKING_CONFIRMED,
@@ -35,7 +36,6 @@ from ..states import (
     RIDE_IN_PROGRESS,
     RIDE_OCCUPIES_VEHICLE,
     RIDE_PUBLISHED,
-    can_transition_booking,
     can_transition_ride,
     ride_transition_error,
 )
@@ -289,12 +289,19 @@ def create_ride():
     if not vehicle:
         raise APIError("Vehicle not found.", 404, code="not_found")
 
-    # A driver may only take paying passengers once the vehicle is verified.
-    # Checked here, before any ride document is written, so an unverified driver
-    # cannot build up a schedule and publish it later.
+    # A driver may only take paying passengers once THREE independent things
+    # are true: the driver is who they say they are, the vehicle is verified, and
+    # the vehicle is registered. Checked here, before any ride document is
+    # written, so an unverified driver cannot build up a schedule and publish it
+    # later. Each gate raises its own error, so the driver is told which of the
+    # three to fix rather than being given a generic "not allowed".
+    from .. import rc as rc_mod
+    from ..identity import assert_can_publish as assert_driver_verified
     from ..kyc import assert_can_publish
 
+    assert_driver_verified(g.user)
     assert_can_publish(vehicle)
+    rc_mod.assert_rc_approved(vehicle)
 
     origin = parse_point(data.get("origin"), required=True)
     destination = parse_point(data.get("destination"), required=True)
@@ -737,12 +744,25 @@ def update_ride_status(rid):
         raise APIError("Unknown trip status.", 422, code="validation_error",
                        details={"allowed": sorted(set(_LIFECYCLE_TARGETS))})
 
-    # A completed ride is terminal: repeating it is a no-op, not an error.
+    # A completed ride is terminal: repeating it is a no-op, not an error. The
+    # response mirrors the first call's shape exactly, reporting the same
+    # awaiting/payable split, so a client that retries on a flaky network sees
+    # identical data rather than a differently-shaped "already done".
     if ride["status"] == RIDE_COMPLETED and target == RIDE_COMPLETED:
+        from .. import completion as completion_mod
+
+        awaiting = [str(b["_id"]) for b in db.bookings.find(
+            {"ride_id": ride_id, "status": BOOKING_AWAITING_COMPLETION})]
         return {"ok": True, "ride": _attach_driver(db.rides.find_one({"_id": ride_id}),
                                                    owner_view=True),
-                "completed_bookings": db.bookings.count_documents(
-                    {"ride_id": ride_id, "status": BOOKING_COMPLETED})}
+                "completed_bookings": len(awaiting), "booking_ids": awaiting,
+                "awaiting_confirmation": awaiting,
+                "payable_now": [
+                    str(b["_id"]) for b in db.bookings.find(
+                        {"ride_id": ride_id, "status": BOOKING_COMPLETED})
+                ],
+                "completion_window_minutes": completion_mod.confirm_window_minutes(),
+                "idempotent": True}
 
     if not can_transition_ride(ride["status"], target):
         raise APIError(ride_transition_error(ride["status"]), 409, code="invalid_transition",
@@ -767,27 +787,43 @@ def update_ride_status(rid):
 
     closed = []
     if target == RIDE_COMPLETED:
-        # Conditional per-booking: a no-show already closed by the driver keeps
-        # its terminal state, and a concurrent refund still wins.
-        for b in db.bookings.find({"ride_id": ride_id, "status": BOOKING_CONFIRMED}):
-            if not can_transition_booking(b["status"], BOOKING_COMPLETED):
+        # Opening the confirmation window, NOT closing the booking. The fare was
+        # collected, but the trip is not finished until the passenger says so
+        # (or the window lapses) -- see completion.py. A no-show already closed
+        # by the driver keeps its terminal state, and a concurrent refund wins.
+        from .. import completion
+
+        closed = completion.driver_completed(ride_id, g.user["_id"], now=now)
+        for bid in closed:
+            booking = db.bookings.find_one({"_id": to_object_id(bid, "booking")})
+            if not booking:
                 continue
-            res = db.bookings.update_one(
-                {"_id": b["_id"], "status": BOOKING_CONFIRMED},
-                {"$set": {"status": BOOKING_COMPLETED, "completed_at": now,
-                          "updated_at": now}})
-            if res.modified_count:
-                closed.append(str(b["_id"]))
-                notifications.notify(
-                    b.get("rider_id"), "Trip completed",
-                    "Your ride has finished. Rate your driver and enjoy the journey next time.")
-                notifications.notify(
-                    b.get("owner_id"), "Trip completed",
-                    f"Ride finished. {b.get('seats', 1)} seat(s) earned and ready for settlement.")
+            deadline = booking.get("completion_deadline")
+            when = iso_utc(deadline) if deadline else "shortly"
+            notifications.notify(
+                booking.get("rider_id"), "Confirm your trip",
+                "Your driver marked the trip finished. Please confirm it to release "
+                f"their payout, or it happens automatically {when}.")
+            notifications.notify(
+                booking.get("owner_id"), "Trip finished",
+                f"Ride finished. {booking.get('seats', 1)} seat(s) will be payable "
+                "once your passenger confirms the trip.")
 
     fresh = db.rides.find_one({"_id": ride_id})
+    from .. import completion as completion_mod
+
     return {"ok": True, "ride": _attach_driver(fresh, owner_view=True),
-            "completed_bookings": len(closed), "booking_ids": closed}
+            "completed_bookings": len(closed), "booking_ids": closed,
+            # Named to preserve the existing response shape: these bookings are
+            # the ones whose completion the driver's tap advanced. They are NOT
+            # settled yet -- `awaiting_confirmation` says so explicitly so a
+            # client cannot read this field as "money has moved".
+            "awaiting_confirmation": closed,
+            "payable_now": [
+                str(b["_id"]) for b in db.bookings.find(
+                    {"ride_id": ride_id, "status": BOOKING_COMPLETED})
+            ],
+            "completion_window_minutes": completion_mod.confirm_window_minutes()}
 
 
 @bp.post("/<rid>/bookings/<bid>/no-show")

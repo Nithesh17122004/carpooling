@@ -131,6 +131,10 @@ def rotate_refresh_token(jti, user):
         classic token REUSE: the entire family is revoked and the request is
         rejected, so a stolen-but-rotated token can never mint another session.
 
+    The replacement row is inserted before the claim rather than after it, so
+    that the family sweep triggered by reuse cannot miss it -- see the comment
+    on the insert below for why that ordering is load-bearing.
+
     Raises 401 on unknown/revoked/expired/mismatched tokens. Returns the new jti
     and family so the caller can re-issue the cookie + access token.
     """
@@ -138,10 +142,43 @@ def rotate_refresh_token(jti, user):
     now = _now()
     new_jti = uuid.uuid4().hex
 
+    # The replacement is written BEFORE the old row is claimed, and that order is
+    # the whole point.
+    #
+    # The loser of a race detects reuse by observing `replaced_by` on the
+    # presented row, and then revokes every unrevoked token in the family. If
+    # the winner minted its replacement afterwards, that replacement does not
+    # exist yet when the sweep runs and survives it -- leaving a live token on
+    # exactly the reuse event that was supposed to kill the session. Writing it
+    # first guarantees that anything which can see the claim can also see the
+    # token, so the sweep cannot miss it.
+    #
+    # The family is read up front for the same reason: a family sweep filters on
+    # `family`, so a row written with an empty family and patched afterwards is
+    # invisible to the sweep for exactly as long as it matters.
+    probe = db.refresh_tokens.find_one({"jti": jti})
+    if probe is None:
+        raise APIError("Session has ended. Please log in again.", 401, code="refresh_revoked")
+    family = probe.get("family") or probe.get("jti")
+
+    db.refresh_tokens.insert_one({
+        "jti": new_jti,
+        "user_id": user["_id"],
+        "family": family,
+        "expires_at": now + timedelta(days=current_app.config["JWT_REFRESH_TTL_DAYS"]),
+        "revoked": False,
+        "replaced_by": None,
+        "created_at": now,
+    })
+
+    def _discard():
+        db.refresh_tokens.delete_one({"jti": new_jti})
+
     old = db.refresh_tokens.find_one_and_update(
         {"jti": jti, "revoked": False},
         {"$set": {"revoked": True, "revoked_at": now, "replaced_by": new_jti}})
     if old is None:
+        _discard()
         row = db.refresh_tokens.find_one({"jti": jti})
         if row and row.get("replaced_by"):
             # The presented token was ALREADY rotated -> reuse attempt.
@@ -155,21 +192,22 @@ def rotate_refresh_token(jti, user):
             raise APIError("Session has ended. Please log in again.", 401, code="refresh_revoked")
         raise APIError("Session has ended. Please log in again.", 401, code="refresh_revoked")
 
-    if old.get("expires_at", now) <= now:
-        raise APIError("Session has expired. Please log in again.", 401, code="refresh_expired")
-    if str(old.get("user_id")) != str(user["_id"]):
-        raise APIError("Invalid session.", 401, code="token_invalid")
+    try:
+        # A family never changes after it is created, so the label the
+        # replacement was written with has to be the one the sweep will use.
+        if (old.get("family") or old.get("jti")) != family:
+            raise APIError("Invalid session.", 401, code="token_invalid")
+        if old.get("expires_at", now) <= now:
+            raise APIError("Session has expired. Please log in again.", 401, code="refresh_expired")
+        if str(old.get("user_id")) != str(user["_id"]):
+            raise APIError("Invalid session.", 401, code="token_invalid")
+    except APIError:
+        # The claim is spent, so this branch must not leave a usable token
+        # behind for a session we are refusing.
+        _discard()
+        raise
 
-    db.refresh_tokens.insert_one({
-        "jti": new_jti,
-        "user_id": user["_id"],
-        "family": old.get("family") or old.get("jti"),
-        "expires_at": now + timedelta(days=current_app.config["JWT_REFRESH_TTL_DAYS"]),
-        "revoked": False,
-        "replaced_by": None,
-        "created_at": now,
-    })
-    return new_jti, old.get("family") or old.get("jti")
+    return new_jti, family
 
 
 # ------------------------------------------------------------------- decorators

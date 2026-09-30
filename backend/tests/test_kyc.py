@@ -41,7 +41,15 @@ def _upload(client, auth_hdr, vehicle_id, kind):
 
 
 def _complete_kyc(client, db, driver, seq, number="KA01AB1234"):
-    """A vehicle with licence + insurance details AND both documents on file."""
+    """A vehicle with licence + insurance details AND both documents on file.
+
+    The driver-identity and RC gates are cleared here too: publication requires
+    all three, and this file is about the vehicle gate specifically, so leaving
+    the other two closed would make every publish assertion below 403 for an
+    unrelated reason.
+    """
+    from backend.tests.conftest import satisfy_other_publish_gates
+
     created = client.post("/api/vehicles", headers=driver["auth"], json={
         "vehicle_type": "4-wheeler", "vehicle_number": f"KA01ZZ{seq:04d}",
         "vehicle_model": "KYC Car", "seat_count": 4,
@@ -50,6 +58,7 @@ def _complete_kyc(client, db, driver, seq, number="KA01AB1234"):
     vid = created.get_json()["vehicle"]["id"]
     _upload(client, driver["auth"], vid, "dl")
     _upload(client, driver["auth"], vid, "insurance")
+    satisfy_other_publish_gates(db, driver["user"]["_id"], vid, vehicle_kyc=False)
     return vid
 
 
@@ -181,7 +190,7 @@ def test_admin_approval_verifies_the_vehicle(client, db, admin, driver):
                            json={"decision": "approve"})
     assert approved.status_code == 200, approved.get_json()
     assert approved.get_json()["vehicle"]["verification_status"] == KYC_VERIFIED
-    assert db.audit_logs.count_documents({"action": "vehicle.verify"}) == 1
+    assert db.audit_logs.count_documents({"action": "identity.vehicle.verify"}) == 1
     assert make_ride(client, driver["auth"],
                      client.get(f"/api/vehicles/{vid}", headers=driver["auth"]
                                 ).get_json()["vehicle"]).status_code == 201

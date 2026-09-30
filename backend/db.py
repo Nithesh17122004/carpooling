@@ -70,7 +70,7 @@ def get_db():
     return _db
 
 
-def _unique_string_index(coll, field):
+def _unique_string_index(coll, field, name=None):
     """Unique index that applies only when the field holds a non-empty string.
 
     Legacy code stored `None` in these fields and used a `sparse` unique index;
@@ -78,7 +78,7 @@ def _unique_string_index(coll, field):
     indexed value), which made e.g. a second booking on a ride fail with an
     E11000. This upgrades/recreates such indexes as partial-on-string.
     """
-    name = f"{field}_1"
+    name = name or f"{field}_1"
     try:
         info = coll.index_information()
     except Exception:  # noqa: BLE001 - collection may not exist yet
@@ -236,10 +236,78 @@ def create_indexes():
     ledger_entries.create_index([("account_id", 1), ("created_at", 1)])
     ledger_entries.create_index([("booking_id", 1)])
     ledger_entries.create_index("entry_id", unique=True)
+    # One financial effect, one entry. Every entry that represents a money
+    # movement carries a `business_key` naming that effect, and this index makes
+    # the database refuse a second one. Application-level guards (payment
+    # claims, refund claims, payout period keys) all race; this does not.
+    #
+    # Partial on "a key exists" so any entry posted without one is still
+    # allowed -- a missing key must not block a write, it just forgoes the
+    # protection.
+    _unique_string_index(ledger_entries, "business_key", name="uniq_ledger_business_key")
+
+    # Immutable record of every gateway reconciliation: what was verified, from
+    # which source, against which order/payment/event. The unique business_key
+    # is what makes a duplicated callback, a retried webhook and an
+    # out-of-order callback/webhook pair converge on one capture with one row.
+    payment_reconciliations = _db.payment_reconciliations
+    _unique_string_index(payment_reconciliations, "business_key",
+                         name="uniq_payment_recon_business_key")
+    payment_reconciliations.create_index([("payment_id", 1), ("verified_at", -1)])
+    payment_reconciliations.create_index([("razorpay_payment_id", 1)])
+    payment_reconciliations.create_index([("razorpay_order_id", 1)])
+    payment_reconciliations.create_index([("verification_source", 1), ("verified_at", -1)])
 
     payouts = _db.payouts
     payouts.create_index([("user_id", 1), ("created_at", -1)])
     _unique_string_index(payouts, "reference")
+    # One payout per (user, settlement period). The worker checks for an
+    # existing payout for the period before creating one, but a check followed
+    # by an insert is a race two concurrent workers can both win -- and paying a
+    # driver twice for one week's earnings is not a recoverable bug. The unique
+    # index makes the database the arbiter instead of the application.
+    try:
+        payouts.create_index(
+            [("user_id", 1), ("period.auto_key", 1)], unique=True,
+            partialFilterExpression={"period.auto_key": {"$type": "string"}})
+    except Exception:  # noqa: BLE001 - best-effort unique index
+        pass
+    # The settlement worker's eligibility scan: oldest completed booking per
+    # driver, filtered by completion state.
+    try:
+        payouts.create_index([("user_id", 1), ("status", 1), ("created_at", 1)])
+    except Exception:  # noqa: BLE001 - best-effort index
+        pass
+
+    # KYC / payout-onboarding queues and settlement scans. Each of these is a
+    # filter the admin screens and the worker run on every pass; without an index
+    # they are collection scans that get slower with every row written.
+    users.create_index([("kyc_status", 1), ("kyc_submitted_at", 1)])
+    users.create_index([("payout_onboarding_status", 1),
+                        ("payout_onboarding_updated_at", 1)])
+    # One identity number, one account, per KYC role. The fingerprint is a
+    # keyed HMAC of the document number, so this is unique WITHOUT storing the
+    # number itself in a queryable field. Uniqueness is scoped to the role
+    # because the fingerprint mixes it in: a person who drives and also rides
+    # legitimately holds a driver record and a passenger record, and a global
+    # unique index would reject the second one.
+    #
+    # Partial on "a fingerprint exists" so the many accounts that have never
+    # submitted identity KYC do not all collide on a null.
+    users.create_index([("kyc_fingerprint", 1)], unique=True, name="uniq_kyc_fingerprint",
+                       partialFilterExpression={"kyc_fingerprint": {"$type": "string"}})
+    vehicles.create_index([("rc_document.verification_status", 1),
+                           ("rc_document.uploaded_at", 1)])
+    vehicles.create_index([("user_id", 1), ("rc_document.verification_status", 1)])
+
+    # Completion window scan: the worker finds trips whose confirmation window
+    # has lapsed. Without this it reads every booking on every pass.
+    try:
+        bookings.create_index([("completion_status", 1), ("completion_deadline", 1)])
+    except Exception:  # noqa: BLE001 - best-effort index
+        pass
+    # The dispute queue, sorted oldest-first.
+    bookings.create_index([("status", 1), ("disputed_at", 1)])
 
     refresh_tokens = _db.refresh_tokens
     refresh_tokens.create_index("jti", unique=True)
@@ -293,6 +361,9 @@ def create_indexes():
     reports.create_index([("target_user_id", 1), ("created_at", -1)])
     reports.create_index([("status", 1), ("created_at", -1)])
     audit_logs.create_index([("action", 1), ("created_at", -1)])
+    # "Every event that can move money", which is the query an operator runs
+    # first. Also covers resolving a single trip's money history.
+    audit_logs.create_index([("target_type", 1), ("target_id", 1), ("created_at", -1)])
 
 
 def to_object_id(raw, label="id"):

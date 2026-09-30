@@ -34,6 +34,7 @@ from backend.tests.conftest import (
     auth,
     token_of,
     make_ride,
+    satisfy_other_publish_gates,
     PASSWORD,
 )
 
@@ -65,10 +66,47 @@ def _book_and_verify(client, driver, rider, vehicle, fare=100):
 
 
 # ------------------------------------------------------------------ Part 4
-def _razorpay_capture_app(db, driver, rider, vehicle, event_id=True):
+def _install_gateway(monkeypatch, *, amount=12000, currency="INR",
+                     status="captured", order_id="order_h_1",
+                     payment_id="pay_h_1"):
+    """Stand in for the Razorpay SDK on the authoritative side.
+
+    The webhook is reconciled against this object, not against the request body,
+    so every test that settles a capture has to supply it. `amount` here is what
+    the *gateway* says -- changing it is how a test simulates a real mismatch.
+    """
+    import backend.payments as paymod
+
+    class _Payment:
+        def fetch(self, pid, **kwargs):
+            return {"id": pid, "status": status, "amount": amount,
+                    "currency": currency, "order_id": order_id, "notes": {}}
+
+        def refund(self, pid, payload, **kwargs):
+            return {"id": "rfnd_hardening_1", "status": "processed"}
+
+    class _Order:
+        def create(self, payload, **kwargs):
+            return {"id": "order_h_1", "status": "created",
+                    "amount": payload.get("amount")}
+
+    class _Client:
+        payment = _Payment()
+        order = _Order()
+
+    client = _Client()
+    monkeypatch.setattr(paymod, "_razorpay_client", lambda: client)
+    return client
+
+
+def _razorpay_capture_app(db, driver, rider, vehicle, event_id=True,
+                          monkeypatch=None, **gateway):
     """Configured razorpay provider with a pending booking + created payment."""
     from backend.app import create_app
     from backend.timeutil import utc_now
+
+    if monkeypatch is not None:
+        _install_gateway(monkeypatch, **gateway)
 
     app = create_app()
     app.config.update({
@@ -118,8 +156,9 @@ def _razorpay_post(c, event_id="evt_h_1", amount=12000, reference="pay_h_1"):
                   data=body, content_type="application/json")
 
 
-def test_webhook_event_id_redelivery_is_already_processed(client, db, driver, rider, vehicle):
-    _app, c, booking_id = _razorpay_capture_app(db, driver, rider, vehicle, event_id=True)
+def test_webhook_event_id_redelivery_is_already_processed(client, db, driver, rider, vehicle, monkeypatch):
+    _app, c, booking_id = _razorpay_capture_app(db, driver, rider, vehicle,
+                                                event_id=True, monkeypatch=monkeypatch)
     first = _razorpay_post(c, "evt_dedup_1")
     assert first.status_code == 200 and first.get_json().get("duplicate") is False
     # same event_id redelivered -> acknowledged, never settled twice
@@ -130,17 +169,79 @@ def test_webhook_event_id_redelivery_is_already_processed(client, db, driver, ri
     assert db.payments.count_documents({"booking_id": booking_id, "status": "success"}) == 1
 
 
-def test_webhook_wrong_amount_never_settles(client, db, driver, rider, vehicle):
-    _app, c, booking_id = _razorpay_capture_app(db, driver, rider, vehicle)
-    resp = _razorpay_post(c, "evt_wrong_amt", amount=999999)
+def test_a_webhook_body_cannot_state_a_different_amount(client, db, driver, rider, vehicle, monkeypatch):
+    """The body claims 999999 and the gateway says 120. The body is ignored.
+
+    The gateway is the only thing that knows how much money moved, so the
+    capture settles at 120 and the books reflect 120. Reading the number out of
+    the request would post a driver payable of Rs 699,999.
+    """
+    _app, c, booking_id = _razorpay_capture_app(db, driver, rider, vehicle,
+                                                monkeypatch=monkeypatch,
+                                                amount=12000)
+    resp = _razorpay_post(c, "evt_body_lies", amount=999999)
     assert resp.status_code == 200
+    assert resp.get_json()["settled"] is True
+    rec = db.payment_reconciliations.find_one({"razorpay_payment_id": "pay_h_1"})
+    assert rec["captured_amount"] == 120.0
+    assert db.ledger_entries.count_documents(
+        {"booking_id": str(booking_id), "amount": 84.0}) == 1
+
+
+def test_a_gateway_amount_that_disagrees_never_settles(client, db, driver, rider, vehicle, monkeypatch):
+    """Now the *gateway* is the one that disagrees with what we froze. This is
+    the case that must stop: the rider was charged 999999 for a 120 fare, and
+    confirming the booking would hide a real overcharge behind a 'paid' state."""
+    _app, c, booking_id = _razorpay_capture_app(db, driver, rider, vehicle,
+                                                monkeypatch=monkeypatch,
+                                                amount=999999)
+    resp = _razorpay_post(c, "evt_real_mismatch")
+    assert resp.status_code == 200
+    assert resp.get_json()["settled"] is False
+    assert db.bookings.find_one({"_id": booking_id})["status"] == "pending_payment"
+    assert db.ledger_entries.count_documents({"booking_id": str(booking_id)}) == 0
+    # Recorded, because an overcharge needs a human, not a silent 200.
+    assert db.payment_reconciliations.count_documents(
+        {"razorpay_payment_id": "pay_h_1"}) == 1
+
+
+def test_an_uncaptured_payment_never_settles(client, db, driver, rider, vehicle, monkeypatch):
+    _app, c, booking_id = _razorpay_capture_app(db, driver, rider, vehicle,
+                                                monkeypatch=monkeypatch,
+                                                status="authorized")
+    resp = _razorpay_post(c, "evt_authorized")
+    assert resp.get_json()["settled"] is False
     assert db.bookings.find_one({"_id": booking_id})["status"] == "pending_payment"
     assert db.ledger_entries.count_documents({"booking_id": str(booking_id)}) == 0
 
 
-def test_concurrent_duplicate_webhooks_settle_once(client, db, driver, rider, vehicle):
+def test_an_unreachable_gateway_is_retried_not_dropped(client, db, driver, rider, vehicle, monkeypatch):
+    """A gateway outage must answer non-2xx so Razorpay keeps retrying.
+
+    A 200 here would be the quiet failure this whole path exists to prevent: the
+    capture is never confirmed, no ledger is posted, and nothing retries.
+    """
+    import backend.payments as paymod
+
+    class _Down:
+        class payment:
+            @staticmethod
+            def fetch(pid, **kwargs):
+                raise RuntimeError("gateway unreachable")
+
+    monkeypatch.setattr(paymod, "_razorpay_client", lambda: _Down())
+    _app, c, booking_id = _razorpay_capture_app(db, driver, rider, vehicle)
+    resp = _razorpay_post(c, "evt_gateway_down")
+    assert resp.status_code == 502
+    assert db.bookings.find_one({"_id": booking_id})["status"] == "pending_payment"
+    assert db.ledger_entries.count_documents({"booking_id": str(booking_id)}) == 0
+
+
+def test_concurrent_duplicate_webhooks_settle_once(client, db, driver, rider, vehicle, monkeypatch):
     """Two concurrent captures for the same payment -> one confirm + one ledger."""
-    _app, c, booking_id = _razorpay_capture_app(db, driver, rider, vehicle, event_id=False)
+    _app, c, booking_id = _razorpay_capture_app(db, driver, rider, vehicle,
+                                                event_id=False,
+                                                monkeypatch=monkeypatch)
 
     results = []
 
@@ -317,12 +418,77 @@ def test_refresh_rotation_is_atomic_and_reuse_revokes_family(client, db):
     assert loser["error"]["code"] == "refresh_reused"
     # the loser's reuse detection revokes the WHOLE family, winner's rotation included
     assert db.refresh_tokens.count_documents({"user_id": ObjectId(uid), "revoked": False}) == 0
-
     # replaying the original (already rotated) token is also reuse
     replay = bare.post("/api/auth/refresh",
                        headers={"Cookie": f"rm_refresh={jti}; Path=/api/auth"})
     assert replay.status_code == 401
     assert replay.get_json()["error"]["code"] == "refresh_reused"
+
+
+def test_the_replacement_token_exists_before_the_claim_is_visible(client, db, monkeypatch):
+    """Why the rotation race above is not flaky: it is not.
+
+    Reuse detection works in two steps -- the loser sees `replaced_by` on the
+    presented row, then sweeps every unrevoked token in the family. That sweep
+    can only catch the winner's replacement if the replacement already exists,
+    and it can only see it if its `family` is already set, because the sweep
+    filters on that field.
+
+    Two threads make the ordering probabilistic, so this pins it directly: at
+    the instant the claim commits, the replacement must be present and already
+    labelled with its family. Move the insert back after the claim and this
+    fails every run instead of once in twenty.
+    """
+    from pymongo.collection import Collection
+
+    _make_user(db, "Order User", "order@test.in")
+    resp = client.post("/api/auth/login", json={"email": "order@test.in",
+                                                "password": PASSWORD})
+    jti = resp.headers.get("Set-Cookie", "").split("rm_refresh=")[1].split(";")[0]
+    uid = db.users.find_one({"email": "order@test.in"})["_id"]
+    family = db.refresh_tokens.find_one({"jti": jti})["family"]
+
+    seen = {}
+    original = Collection.find_one_and_update
+
+    def spy(self, filter, update, *a, **kw):
+        result = original(self, filter, update, *a, **kw)
+        if result is not None and update.get("$set", {}).get("replaced_by"):
+            replacement = update["$set"]["replaced_by"]
+            row = self.find_one({"jti": replacement})
+            seen["present"] = row is not None
+            seen["family_set"] = bool(row and row.get("family"))
+        return result
+
+    monkeypatch.setattr(Collection, "find_one_and_update", spy)
+
+    from backend import security
+    from backend.errors import APIError
+
+    user = db.users.find_one({"_id": uid})
+    with client.application.app_context():
+        new_jti, got_family = security.rotate_refresh_token(jti, user)
+
+        assert seen.get("present") is True, (
+            "the replacement was inserted after the claim, so a concurrent reuse "
+            "sweep would miss it and leave a live token behind")
+        assert seen.get("family_set") is True, (
+            "the replacement had no family at claim time, so the sweep's "
+            "family filter would not match it")
+        assert got_family == family
+        assert db.refresh_tokens.find_one({"jti": new_jti})["revoked"] is False
+
+        # And the happy path does not accumulate junk: one rotation leaves the
+        # presented row revoked and one live replacement, not a spare.
+        assert db.refresh_tokens.count_documents({"user_id": uid}) == 2
+
+        # A second rotation attempt on the spent token is reuse, and cleans up
+        # after itself rather than leaving a dangling replacement.
+        with pytest.raises(APIError) as exc:
+            security.rotate_refresh_token(jti, user)
+    assert exc.value.code == "refresh_reused"
+    assert db.refresh_tokens.count_documents({"user_id": uid,
+                                              "revoked": False}) == 0
 
 
 # ------------------------------------------------------------------ Part 11
@@ -701,10 +867,9 @@ def test_search_ranks_by_match_score(client, db, driver, vehicle):
         "vehicle_type": "4-wheeler", "vehicle_number": "KA99XX0002",
         "vehicle_model": "Car Two", "seat_count": 4})
     assert v2.status_code == 201, v2.get_json()
-    # scoring test, not a KYC test -- mark the vehicle verified so the publish
-    # gate stays out of the way
-    db.vehicles.update_one({"_id": ObjectId(v2.get_json()["vehicle"]["id"])},
-                           {"$set": {"verification_status": "verified"}})
+    # Scoring test, not a KYC test -- clear all three publish gates so they stay
+    # out of the way. Each gate has its own tests.
+    satisfy_other_publish_gates(db, driver2["_id"], v2.get_json()["vehicle"]["id"])
 
     r1 = make_ride(client, driver["auth"], vehicle,
                    origin=("Near Pt", 12.90, 77.60), dest=("Dest", 13.00, 77.70),

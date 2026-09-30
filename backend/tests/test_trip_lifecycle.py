@@ -12,7 +12,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from bson import ObjectId
 
+from backend import completion
+from backend.completion import COMPLETION_AWAITING
 from backend.states import (
+    BOOKING_AWAITING_COMPLETION,
     BOOKING_CANCELLED,
     BOOKING_COMPLETED,
     BOOKING_CONFIRMED,
@@ -95,7 +98,14 @@ def test_lifecycle_walks_the_legal_states_in_order(client, trip, driver):
             resp.get_json()["ride"]["status"] == expected
 
 
-def test_completing_the_trip_closes_the_booking(client, db, trip, driver):
+def test_completing_the_trip_opens_the_confirmation_window(client, db, trip, driver):
+    """The driver's tap must NOT close the booking.
+
+    The old behaviour set `completed` here, which released the driver's payable
+    the instant they tapped the button and made the driver the sole authority on
+    whether a trip happened. The trip now only enters the confirmation window;
+    settlement waits on the passenger (see completion.py).
+    """
     rid, bid = trip["ride_id"], trip["booking_id"]
     for phase in ("start", "boarding", "depart"):
         client.post(f"/api/rides/{rid}/status", headers=driver["auth"], json={"status": phase})
@@ -105,14 +115,24 @@ def test_completing_the_trip_closes_the_booking(client, db, trip, driver):
     assert resp.status_code == 200, resp.get_json()
     assert resp.get_json()["completed_bookings"] == 1
     assert resp.get_json()["booking_ids"] == [bid]
+    assert resp.get_json()["awaiting_confirmation"] == [bid]
+    # Money has NOT moved, and the response says so.
+    assert resp.get_json()["payable_now"] == []
 
-    assert db.bookings.find_one({"_id": ObjectId(bid)})["status"] == BOOKING_COMPLETED
-    assert db.bookings.find_one({"_id": ObjectId(bid)})["completed_at"] is not None
+    booking = db.bookings.find_one({"_id": ObjectId(bid)})
+    assert booking["status"] == BOOKING_AWAITING_COMPLETION
+    assert booking["completion_status"] == COMPLETION_AWAITING
+    assert booking["driver_completed_at"] is not None
+    assert booking["passenger_confirmed_at"] is None
+    # `completed_at` is absent until something actually completes the trip.
+    assert booking.get("completed_at") is None
+    assert booking["completion_deadline"] is not None
+    assert completion.is_payable(booking) is False
 
 
 def test_completion_is_idempotent(client, db, trip, driver):
-    """A retried 'complete' (double tap, flaky network) must not double-close
-    the booking or re-notify."""
+    """A retried 'complete' (double tap, flaky network) must not re-open the
+    window, re-notify, or reset a passenger confirmation that already landed."""
     rid, bid = trip["ride_id"], trip["booking_id"]
     for phase in ("start", "boarding", "depart"):
         client.post(f"/api/rides/{rid}/status", headers=driver["auth"], json={"status": phase})
@@ -122,10 +142,10 @@ def test_completion_is_idempotent(client, db, trip, driver):
                          json={"status": "complete"})
 
     assert first.status_code == 200 and second.status_code == 200
-    # the repeat reports the already-closed state instead of claiming new work
+    # the repeat reports the already-opened state instead of claiming new work
     assert second.get_json()["completed_bookings"] == 1
     assert db.bookings.count_documents({"ride_id": ObjectId(rid),
-                                        "status": BOOKING_COMPLETED}) == 1
+                                        "status": BOOKING_AWAITING_COMPLETION}) == 1
 
 
 # ------------------------------------------------------------- what is refused

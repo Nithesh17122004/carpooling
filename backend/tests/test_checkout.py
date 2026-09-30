@@ -28,16 +28,26 @@ def _razorpay_app(monkeypatch, key_id="rzp_test_PUBLISHABLE", key_secret="super_
 
     class _Orders:
         last = {}
+        last_id = {}
 
         @staticmethod
         def create(payload):
             _Orders.last = payload
-            return {"id": "order_TEST_0001", "amount": payload["amount"], "status": "created"}
+            order = {"id": "order_TEST_0001", "amount": payload["amount"],
+                     "status": "created", "currency": "INR"}
+            _Orders.last_id = order
+            return order
 
     class _Payments:
         @staticmethod
         def fetch(pid):
-            return {"id": pid, "status": "captured", "amount": 12000}
+            # Mirrors what Razorpay actually returns: a payment object always
+            # carries the order it settled and the currency it settled in. A
+            # stub that omits them is not a smaller response, it is a different
+            # (and unsafe) one.
+            return {"id": pid, "status": "captured", "amount": 12000,
+                    "currency": "INR", "order_id": _Orders.last_id.get("id"),
+                    "method": "upi", "captured": True, "notes": {}}
 
         @staticmethod
         def refund(pid, payload):

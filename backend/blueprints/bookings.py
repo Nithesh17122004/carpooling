@@ -31,7 +31,7 @@ from ..errors import APIError
 from .. import notifications
 from ..payments import create_order, verify_payment, refund_payment, checkout_config
 from ..ratelimit import rate_limit
-from ..security import require_auth
+from ..security import require_admin, require_auth
 from ..serializers import driver_snapshot, public_user
 from ..states import (
     BOOKING_PENDING_PAYMENT,
@@ -104,6 +104,14 @@ def clean_booking(booking):
         "cancelled_at": iso_utc(b.get("cancelled_at")),
         "details": b.get("details"),
     }
+    # Trip completion. Included in every booking view so the UI never has to
+    # guess whether a "Confirm trip" button should be shown: `can_confirm` and
+    # `can_dispute` are computed server-side from the same state machine that
+    # gates the money.
+    from .. import completion as completion_mod
+
+    out["completion"] = completion_mod.completion_summary(b)
+    out["completed_at"] = iso_utc(b.get("completed_at"))
     return out
 
 
@@ -200,6 +208,13 @@ def create_booking():
         raise APIError("You cannot book your own ride.", 400, code="own_ride")
     if is_past(ride.get("departure_at"), _now()):
         raise APIError("Ride has already departed.", 409, code="ride_departed")
+
+    # Passenger identity gate. Off by default (PASSENGER_KYC_ENFORCE_BOOKING),
+    # because turning it on before the review queue is staffed would block every
+    # booking. When on, it is a hard refusal, not a warning.
+    from .. import identity as identity_mod
+
+    identity_mod.assert_can_book(g.user)
 
     existing = db.bookings.find_one(
         {"ride_id": ride_id, "rider_id": g.user["_id"],
@@ -538,3 +553,200 @@ def cancel_booking(bid):
         f"{pct}% refund of ${booking['amount']:.2f} issued" if pct else "Booking cancelled.",
         ref_type="booking", ref_id=str(fresh["_id"]))
     return {"ok": True, "booking": clean_booking(_hydrate(db, fresh))}
+
+
+# ================================================ trip completion and disputes
+# The driver marks the trip finished; the PASSENGER confirms it. Until they do
+# (or the window lapses, or an admin resolves a dispute) the driver's earnings
+# are held -- see completion.py and payouts.held_payable.
+
+
+@bp.get("/<bid>/completion")
+@require_auth
+def completion_status(bid):
+    """What state this trip's completion is in, and what the caller may do."""
+    from .. import completion as completion_mod
+
+    db = get_db()
+    booking_id = to_object_id(bid, "booking")
+    booking = db.bookings.find_one({"_id": booking_id})
+    if not booking:
+        raise APIError("Booking not found.", 404, code="not_found")
+    _assert_trip_participant(booking, "view this trip")
+
+    summary = completion_mod.completion_summary(booking)
+    summary["is_passenger"] = booking.get("rider_id") == g.user["_id"]
+    summary["is_driver"] = booking.get("owner_id") == g.user["_id"]
+    return {"ok": True, "completion": summary}
+
+
+@bp.post("/<bid>/confirm-completion")
+@require_auth
+@rate_limit("strict")
+def confirm_completion(bid):
+    """Passenger confirms the trip happened, releasing the driver's earnings.
+
+    Idempotent: confirming twice is a no-op that reports the existing state,
+    because a double tap on a flaky connection is normal and must never be an
+    error the user has to understand.
+    """
+    from .. import completion as completion_mod
+
+    db = get_db()
+    booking_id = to_object_id(bid, "booking")
+    booking = db.bookings.find_one({"_id": booking_id})
+    if not booking:
+        raise APIError("Booking not found.", 404, code="not_found")
+    if booking.get("rider_id") != g.user["_id"]:
+        raise APIError("Only the passenger on this trip can confirm it.", 403,
+                       code="forbidden")
+
+    updated, idempotent = completion_mod.passenger_confirmed(booking_id, g.user["_id"])
+    if not idempotent:
+        notifications.notify(
+            updated.get("owner_id"), "Trip confirmed",
+            "Your passenger confirmed the trip. Your earnings are now available "
+            "for payout.")
+
+    fresh = db.bookings.find_one({"_id": booking_id})
+    return {"ok": True, "idempotent": idempotent,
+            "booking": clean_booking(_hydrate(db, fresh)),
+            "completion": completion_mod.completion_summary(fresh)}
+
+
+@bp.post("/<bid>/dispute")
+@require_auth
+@rate_limit("strict")
+def dispute_completion(bid):
+    """Passenger disputes the trip. Holds the earnings until an admin decides.
+
+    There is deliberately no "un-dispute" route: the passenger can withdraw the
+    complaint only by contacting support, so a driver cannot wait out a
+    complaint and then complete the trip.
+    """
+    from .. import completion as completion_mod
+
+    db = get_db()
+    booking_id = to_object_id(bid, "booking")
+    booking = db.bookings.find_one({"_id": booking_id})
+    if not booking:
+        raise APIError("Booking not found.", 404, code="not_found")
+    if booking.get("rider_id") != g.user["_id"]:
+        raise APIError("Only the passenger on this trip can raise a dispute.", 403,
+                       code="forbidden")
+
+    payload = request.get_json(silent=True) or {}
+    reason = payload.get("reason") or request.form.get("reason")
+    details = payload.get("details") or request.form.get("details")
+    completion_mod.raise_dispute(booking_id, g.user["_id"], reason, details)
+
+    notifications.notify(
+        booking.get("owner_id"), "Trip disputed",
+        "Your passenger has raised a dispute about this trip. Your payout for it "
+        "is on hold while we review it.")
+    notifications.notify(
+        g.user["_id"], "Dispute received",
+        "We are reviewing your dispute and will be in touch.")
+
+    fresh = db.bookings.find_one({"_id": booking_id})
+    return {"ok": True,
+            "booking": clean_booking(_hydrate(db, fresh)),
+            "completion": completion_mod.completion_summary(fresh)}
+
+
+@bp.post("/<bid>/resolve-dispute")
+@require_admin
+@rate_limit("strict")
+def resolve_dispute(bid):
+    """Admin decision on a disputed trip: release the payout, or refund."""
+    from .. import completion as completion_mod
+
+    db = get_db()
+    booking_id = to_object_id(bid, "booking")
+    payload = request.get_json(silent=True) or request.form.to_dict()
+    resolution = payload.get("resolution")
+    note = payload.get("note")
+
+    booking = db.bookings.find_one({"_id": booking_id})
+    if not booking:
+        raise APIError("Booking not found.", 404, code="not_found")
+
+    wants_refund = (resolution or "").lower() in (
+        "refund", "refund_passenger", "partial_refund")
+
+    # Claim the dispute BEFORE moving money.
+    #
+    # resolve_dispute() conditionally claims the row on `disputed`, so it is the
+    # mutex for this decision. Refunding first would let two admins both read
+    # `disputed` and act: one releases the driver's earnings while the other
+    # refunds the passenger, and the trip is both paid out and refunded. Whoever
+    # loses the claim gets 409 and moves no money.
+    completion_mod.resolve_dispute(booking_id, resolution, g.user["_id"], note)
+
+    if wants_refund:
+        # The state is now REFUND_PENDING and non-payable, so the driver cannot be
+        # paid out for this trip while the refund is in flight. refund_payment is
+        # itself idempotent per payment.
+        from ..payments import refund_payment
+
+        payment = db.payments.find_one({"booking_id": booking_id,
+                                        "status": "success"})
+        if payment:
+            try:
+                refund_payment(payment, "Dispute resolved in favour of the passenger")
+            except Exception as exc:
+                # Nothing is lost -- the trip stays non-payable and the payment is
+                # untouched -- but the refund did not happen. The claim is already
+                # spent, so a retry has to go through the refund path directly.
+                # Record it rather than let it vanish into a 500.
+                from .. import audit
+
+                audit.record(
+                    "financial.dispute.refund_failed", domain=audit.FINANCIAL,
+                    actor_id=g.user["_id"], actor_role="admin",
+                    target_type="booking", target_id=booking_id,
+                    reason="dispute resolved as refund but the refund failed",
+                    meta={"error_type": type(exc).__name__})
+                raise
+
+    if (resolution or "").lower() in ("release", "release_to_driver", "dismiss",
+                                       "uphold_driver"):
+        notifications.notify(
+            booking.get("owner_id"), "Dispute resolved",
+            "The dispute on your trip has been resolved in your favour. Your "
+            "payout is available.")
+    else:
+        notifications.notify(
+            booking.get("owner_id"), "Dispute resolved",
+            "The dispute on your trip has been resolved in favour of the "
+            "passenger and a refund has been issued.")
+
+    fresh = db.bookings.find_one({"_id": booking_id})
+    return {"ok": True,
+            "booking": clean_booking(_hydrate(db, fresh)),
+            "completion": completion_mod.completion_summary(fresh)}
+
+
+@bp.get("/completion/queue")
+@require_admin
+def dispute_queue():
+    """Disputed trips awaiting an admin decision."""
+    from .. import completion as completion_mod
+    from ..states import BOOKING_DISPUTED
+
+    db = get_db()
+    limit = min(int(request.args.get("limit", 50) or 50), 200)
+    rows = db.bookings.find({"status": BOOKING_DISPUTED}).sort("disputed_at", 1)
+    out = []
+    for booking in rows.limit(limit):
+        item = clean_booking(_hydrate(db, booking))
+        item["completion"] = completion_mod.completion_summary(booking)
+        out.append(item)
+    return {"ok": True, "queue": out, "count": len(out)}
+
+
+def _assert_trip_participant(booking, action):
+    """Only the driver or the passenger on this trip may act on it."""
+    if g.user["_id"] in (booking.get("rider_id"), booking.get("owner_id")):
+        return
+    raise APIError("You are not on this trip.", 403, code="forbidden")
