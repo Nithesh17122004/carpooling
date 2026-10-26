@@ -3,6 +3,8 @@
 import base64
 import io
 
+from bson import ObjectId
+
 from backend.tests.conftest import _make_user, make_ride
 
 # 1x1 valid PNG (Pillow can decode it)
@@ -39,7 +41,7 @@ def test_rc_document_upload_is_private_and_supported(client, db, driver, rider, 
                     content_type="multipart/form-data")
     assert r.status_code == 200, r.get_json()
     assert r.get_json()["kind"] == "rc"
-    assert db.vehicles.find_one({"_id": __import__("bson").ObjectId(vehicle["id"])})["rc_document"]["key"]
+    assert db.vehicles.find_one({"_id": ObjectId(vehicle["id"])})["rc_document"]["key"]
     assert client.get(f"/api/uploads/vehicle-doc/{vehicle['id']}/rc", headers=driver["auth"]).status_code == 200
     assert client.get(f"/api/uploads/vehicle-doc/{vehicle['id']}/rc", headers=rider["auth"]).status_code == 404
 
