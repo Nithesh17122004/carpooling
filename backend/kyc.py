@@ -36,7 +36,7 @@ KYC_REJECTED = "rejected"
 
 KYC_STATES = {KYC_UNVERIFIED, KYC_SUBMITTED, KYC_VERIFIED, KYC_REJECTED}
 
-# Only these two document slots participate in verification.
+# All three private vehicle documents participate in manual verification.
 REQUIRED_DOCUMENTS = ("dl_document", "rc_document", "insurance_document")
 REQUIRED_FIELDS = ("dl_number", "rc_number", "insurance_number")
 
