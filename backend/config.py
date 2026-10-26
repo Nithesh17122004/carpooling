@@ -303,8 +303,9 @@ def validate_runtime(app_config) -> None:
             problems.append("EMAIL_PROVIDER=resend is required when email verification is mandatory")
         if _placeholder(app_config.get("RESEND_API_KEY")):
             problems.append("RESEND_API_KEY is required when email verification is mandatory")
-        if _placeholder(app_config.get("EMAIL_FROM")):
-            problems.append("EMAIL_FROM is required when email verification is mandatory")
+        sender = str(app_config.get("EMAIL_FROM") or "").lower()
+        if _placeholder(app_config.get("EMAIL_FROM")) or "example.com" in sender:
+            problems.append("EMAIL_FROM must be a real verified sender when email verification is mandatory")
 
     if _placeholder(app_config.get("JWT_SECRET"))
         problems.append("JWT_SECRET")
