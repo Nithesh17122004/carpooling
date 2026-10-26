@@ -137,7 +137,7 @@ def _maybe_send_verification(user):
 @bp.post("/register")
 @rate_limit("auth")
 def register():
-    if firebase_is_configured(current_app.config):
+    if firebase_is_configured(current_app.config) and current_app.config.get("FIREBASE_AUTH_ENFORCE"):
         raise APIError("Use the secure Firebase email-link sign-in to create your RideMate account.",
                        409, code="firebase_email_link_required")
     data = body()
@@ -175,7 +175,7 @@ def register():
 @bp.post("/login")
 @rate_limit("auth")
 def login():
-    if firebase_is_configured(current_app.config):
+    if firebase_is_configured(current_app.config) and current_app.config.get("FIREBASE_AUTH_ENFORCE"):
         raise APIError("Use the secure Firebase email-link sign-in to access your RideMate account.",
                        409, code="firebase_email_link_required")
     data = body()
@@ -212,10 +212,11 @@ def providers():
     return {
         "ok": True,
         "providers": {
-            "password": True,
+            "password": not (firebase_is_configured(cfg) and bool(cfg.get("FIREBASE_AUTH_ENFORCE"))),
             "google": provider.configured(),
             "google_client_id": provider.client_id or "",
             "firebase": firebase_is_configured(cfg),
+            "firebase_enforced": firebase_is_configured(cfg) and bool(cfg.get("FIREBASE_AUTH_ENFORCE")),
             "firebase_config": firebase_web_config(cfg),
         },
         "flags": {
