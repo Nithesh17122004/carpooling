@@ -137,7 +137,7 @@ def download_document(vid, kind):
         raise APIError("Document not uploaded.", 404, code="not_found")
     if doc.get("doc_id") and doc["key"].startswith("private/"):
         data, content_type = load_private_document(vehicle["user_id"], kind, doc["doc_id"], doc["key"])
-        name = doc.get("original_name") or f"{kind}-document"
+        name = storage.safe_filename(doc.get("original_name") or f"{kind}-document")
     else:
         # Backward-compatible read for legacy uploads; new uploads are encrypted.
         data, content_type, name = storage.read_key(doc["key"])
