@@ -172,6 +172,26 @@ export const Api = {
   vehicles: () => get('/api/vehicles'),
   vehicle: (id) => get(`/api/vehicles/${id}`),
   submitVehicleVerification: (id) => post(`/api/vehicles/${id}/submit-verification`, {}),
+  pendingVehicleReviews: () => get('/api/admin/vehicles/pending'),
+  reviewVehicle: (id, payload) => post(`/api/admin/vehicles/${id}/verify`, payload),
+  downloadVehicleDoc: async (path) => {
+    const run = () => fetch(API_BASE + path, {
+      headers: store.token ? { Authorization: `Bearer ${store.token}` } : {},
+      credentials: 'include',
+    });
+    let res = await run();
+    if (res.status === 401) {
+      await refreshAccessToken();
+      res = await run();
+    }
+    if (!res.ok) {
+      let data = null;
+      try { data = await res.json(); } catch { /* noop */ }
+      const err = (data && data.error) || {};
+      throw new ApiError(err.message || `Document request failed (${res.status})`, res.status, err.code, err.details);
+    }
+    return res.blob();
+  },
   createVehicle: (b) => post('/api/vehicles', b),
   updateVehicle: (id, b) => patch(`/api/vehicles/${id}`, b),
   deleteVehicle: (id) => del(`/api/vehicles/${id}`),
