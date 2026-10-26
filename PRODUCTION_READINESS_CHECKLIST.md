@@ -1,37 +1,73 @@
-# Production readiness checklist
+# RideMate production readiness checklist
 
-This file tracks evidence, not intentions. A check is **verified** only when its stated evidence exists for the target environment. CI passing is not equivalent to a live payment, a verified identity provider, or a security-reviewed production deployment.
+**Current target:** public marketplace hosted on Render.
+**Current decision blockers:** no Razorpay account yet; email, payout model, and KYC method are undecided.
+**Release status: NOT APPROVED FOR PUBLIC PRODUCTION.**
 
-## Automated evidence
+This checklist tracks evidence, not intentions. A box is complete only when the evidence exists for the target environment. CI passing is not equivalent to live payments, verified identities, or a security-reviewed production deployment.
 
-- [ ] Backend tests pass in GitHub Actions against MongoDB 7.
-- [ ] Frontend JavaScript syntax checks pass.
-- [ ] Production Docker image builds.
-- [ ] Browser smoke check passes against the running SPA and API with a real Chromium browser.
+## Verified in GitHub Actions
+
+- [ ] Backend tests pass in GitHub Actions against MongoDB 7. The baseline CI run for PR #2 passed, but the current PR #3 run is still pending.
+- [x] Production Docker image builds successfully in the production-verification workflow.
+- [x] Chromium browser smoke check passes against the running SPA and API (shell, core assets, API readiness, uncaught JS errors).
+- [ ] Frontend syntax/dependency checks pass on the latest PR #3 head; confirm the current CI run before merge.
 - [ ] Release artifact is built and scanned for secrets before publication.
 
-## Requires owner access or an external system
+Evidence links:
+- [Production verification workflow](https://github.com/Nithesh17122004/carpooling/actions/workflows/production-verification.yml)
+- [PR #3 CI](https://github.com/Nithesh17122004/carpooling/actions/workflows/ci.yml)
 
-- [ ] Razorpay test-mode checkout, signed `payment.captured` webhook, duplicate webhook replay, failed payment and refund tested against Razorpay.
-- [ ] If RazorpayX payouts will be used: test linked-account onboarding and provider-confirmed success/failure webhooks. If payouts remain manual, document dual-control and bank-reconciliation procedures instead.
-- [ ] Email provider configured; registration and resend-verification emails arrive; expiry, replay and invalid-token behavior verified.
-- [ ] Decide whether human KYC review is acceptable for the pilot or select and contract a compliant verification provider. The current code workflow is not evidence of third-party identity validation.
-- [ ] Browser test with Razorpay test checkout and mobile/desktop viewport evidence.
-- [ ] Staging deployment passes readiness checks; HTTPS, CORS allowlist, Redis, managed MongoDB, encrypted private documents, backups and a successful restore drill are evidenced.
-- [ ] Production secrets are in the deployment secret manager, never in Git; access is restricted and rotation/recovery is documented.
-- [ ] Monitoring and alerting cover payment/webhook failures, payout failures, 5xx, readiness, queue backlog and database/Redis outages; rollback is rehearsed.
-- [ ] Local legal counsel/insurance review covers applicable state rules, platform/aggregator classification, driver eligibility, insurance, privacy/retention, consumer terms, refunds, grievance handling and incident response.
-- [ ] Small monitored pilot completes with consent, support coverage, incident handling and defined stop criteria before wider launch.
+## Owner actions — blocking a public launch
 
-## Owner inputs needed
+### 1. Create and activate the payment account
+- [ ] Create a Razorpay account for the legal entity/operator running RideMate.
+- [ ] Confirm Razorpay approves the intended marketplace/business model and payment flow; do not assume a standard account permits every marketplace or split-settlement design.
+- [ ] Generate **test-mode** keys and configure the webhook endpoint `/api/payments/webhook` and a webhook signing secret in Render's secret environment settings.
+- [ ] Run real sandbox checkout, valid and invalid webhook signatures, duplicate webhook replay/idempotency, failed payment, cancellation, refund and reconciliation tests.
+- [ ] Obtain any required live-mode activation before accepting customer money. Never put keys in Git or this chat.
 
-1. **Email:** choose an SMTP/email provider (e.g. SES, Resend, SendGrid, Postmark) and provide sender domain/address after configuring secrets in the deployment platform. Never paste secrets into chat or commit them.
-2. **Payments:** confirm the Razorpay account is yours/your organisation's and available for RideMate's intended marketplace/payment model; create test keys and a webhook endpoint/secret in the deployment secret store. Live approval is a separate provider decision.
-3. **Payouts:** choose manual payouts or RazorpayX. For RazorpayX, complete the required merchant and linked-account onboarding.
-4. **KYC:** choose human review for a limited pilot or name the KYC provider you want evaluated. Do not send real Aadhaar/passport/driver documents in this chat.
-5. **Deployment:** provide the host/platform choice and configure the production/staging environment there. Share only non-secret service URLs and deployment status here.
-6. **Policy/legal:** confirm initial launch geography, whether this is a campus/employer/private pilot or public marketplace, intended driver compensation, and who will review legal/insurance documents.
+### 2. Choose and configure email delivery
+- [ ] Choose a provider (recommended short-list: Amazon SES, Resend, SendGrid or Postmark).
+- [ ] Verify a sender domain/address and configure the provider credentials securely in Render.
+- [ ] Implement/configure actual registration and resend-verification email delivery; current code generates a token but has no mail transport wired in.
+- [ ] Make email verification mandatory for a public launch only after delivery is working; test delivered links, expiration, replay, invalid tokens and resend rate limits.
+
+### 3. Decide payout operations
+- [ ] Choose **manual payouts** for a tightly controlled initial launch, with dual approval, bank-reference recording, reconciliation and an owner responsible for each payout; OR choose RazorpayX and complete provider onboarding plus signed payout webhook tests.
+- [ ] Do not advertise automated payouts unless the provider integration and its failure/retry/reconciliation paths are tested.
+
+### 4. Decide identity verification and document handling
+- [ ] Decide whether to run a manual-review operation or integrate a compliant third-party KYC provider.
+- [ ] If manual review is chosen, appoint trained reviewers, define review SLAs/rejection appeals and limit who can access identity documents.
+- [ ] If a vendor is chosen, complete vendor/legal onboarding and test the vendor's verification result and failure states.
+- [ ] Set a strong `DOCUMENT_ENCRYPTION_KEY` in Render secrets; verify document access controls and retention/deletion policy before real identity documents are uploaded.
+
+### 5. Set up Render staging and production
+- [ ] Create separate staging and production services (or equivalent isolated environments); configure the Docker web service and set the health check path to `/api/ready`.
+- [ ] Provision Redis/Key Value and configure `REDIS_URL`.
+- [ ] Provision managed MongoDB (for example MongoDB Atlas) and configure `MONGO_URI` and `MONGO_DB_NAME`; allow only the necessary network access.
+- [ ] Set unique strong `SECRET_KEY` and `JWT_SECRET`, `FLASK_ENV=production`, `REFRESH_COOKIE_SECURE=true`, exact HTTPS `FRONTEND_ORIGINS`, `PUBLIC_BASE_URL`, payment settings and document encryption key. Store secrets only in Render environment settings.
+- [ ] Deploy staging, verify `/api/ready`, confirm database/Redis checks, HTTPS cookies, CORS, logs and error reporting.
+- [ ] Configure database backups and perform a restore drill; configure monitoring/alerts and rehearse rollback.
+- [ ] Configure a separate background worker for settlement processing if payout/settlement processing is enabled, and verify it is healthy and observable.
+- [ ] After any config change, redeploy and verify the active deploy and runtime settings without exposing secret values.
+
+### 6. Public-launch operational and legal sign-off
+- [ ] Obtain qualified local legal/insurance review for the actual launch geography and business model: applicable transport/aggregator rules, driver/passenger terms, vehicle insurance, privacy/retention, consumer protection, refunds, grievance handling and safety incident response.
+- [ ] Define support contact and incident escalation, SOS response ownership, fraud/report handling, cancellation/refund policy and a process to suspend unsafe users/drivers.
+- [ ] Run a monitored pilot with real volunteers before public promotion; define launch metrics and stop/rollback criteria.
+- [ ] Complete a final go/no-go review. Do not open public signups or accept real payments before all critical gates are evidenced.
+
+## Decisions already provided by owner
+
+- Hosting: **Render**
+- Launch: **Public marketplace**
+- Razorpay account: **None yet**
+- Email provider: **Undecided**
+- Payout model: **Undecided**
+- KYC approach: **Undecided**
 
 ## Status rule
 
-Do not change a box to complete solely because code exists or a mock test passes. Record the CI run, provider test evidence, staging URL/check results, or signed-off operational review that proves it.
+Do not mark a box complete just because code exists or a mock test passes. Record the CI run, provider sandbox evidence, staging URL/check results, backup-restore evidence, or written legal/operational sign-off that proves it.
