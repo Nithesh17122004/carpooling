@@ -125,7 +125,7 @@ def _maybe_send_verification(user):
     ttl_hours = current_app.config["EMAIL_VERIFY_TTL_HOURS"]
     get_db().users.update_one({"_id": user["_id"]}, {"$set": {
         "verify_email_token": token,
-        "verify_email_token_expires": utcnow() + _ttl(ttl_hours),
+        "verify_email_token_expires": _ttl(ttl_hours),
     }})
     return token
 
