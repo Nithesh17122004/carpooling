@@ -8,6 +8,7 @@ from .. import db as dbmodule
 from ..db import get_db, utcnow
 from ..errors import APIError
 from ..email_provider import send_verification_email
+from ..firebase_auth import firebase_is_configured, firebase_web_config, verify_firebase_id_token
 from ..google_oauth import get_google_provider
 from ..ratelimit import rate_limit
 from ..security import (
@@ -102,6 +103,8 @@ def _create_user(name, email, password_hash, **extra):
     }
     if extra.get("google_id"):
         doc["google_id"] = extra["google_id"]
+    if extra.get("firebase_uid"):
+        doc["firebase_uid"] = extra["firebase_uid"]
     try:
         result = get_db().users.insert_one(doc)
     except DuplicateKeyError:
@@ -206,12 +209,66 @@ def providers():
             "password": True,
             "google": provider.configured(),
             "google_client_id": provider.client_id or "",
+            "firebase": firebase_is_configured(cfg),
+            "firebase_config": firebase_web_config(cfg),
         },
         "flags": {
             "require_email_verification": bool(cfg.get("REQUIRE_EMAIL_VERIFICATION")),
             "demo_payments": cfg.get("PAYMENT_PROVIDER") == "demo",
         },
     }
+
+
+# ------------------------------------------------------ Firebase email link
+@bp.post("/firebase")
+@rate_limit("auth")
+def firebase_signin():
+    """Exchange a verified Firebase ID token for a normal RideMate session."""
+    data = body()
+    require_fields(data, "id_token")
+    raw_token = as_str(data.get("id_token"), "id_token", min_len=20, max_len=12000, required=True)
+    claims = verify_firebase_id_token(raw_token)
+    uid = claims["sub"]
+    email = valid_email(claims.get("email"), required=True)
+    supplied_name = as_str(data.get("name"), "name", max_len=80) or ""
+    name = supplied_name or as_str(claims.get("name"), "name", max_len=80) or email.split("@", 1)[0][:80]
+    phone = valid_phone(data.get("phone"))
+    age = as_int(data.get("age"), "age", minimum=5, maximum=120)
+    gender = as_str(data.get("gender"), "gender", max_len=20)
+    if gender and gender not in GENDERS:
+        raise APIError("Invalid gender.", 422, code="validation_error", details={"fields": ["gender"]})
+
+    db = get_db()
+    user = db.users.find_one({"firebase_uid": uid})
+    if user and (user.get("email") or "").lower() != email.lower():
+        raise APIError("Your Firebase email differs from the RideMate account. Contact support to update it safely.",
+                       409, code="firebase_email_changed")
+    if user is None:
+        user = db.users.find_one({"email": email.lower()})
+    if user is None:
+        user = _create_user(name, email, hash_password(random_token(32)),
+                            auth_provider="firebase", firebase_uid=uid,
+                            email_verified=True, phone=phone, age=age, gender=gender)
+    else:
+        existing_uid = user.get("firebase_uid")
+        if existing_uid and existing_uid != uid:
+            raise APIError("This email is linked to a different managed-auth account.",
+                           409, code="firebase_account_conflict")
+        updates = {"firebase_uid": uid, "email_verified": True,
+                   "last_login_at": utcnow(), "updated_at": utcnow()}
+        if not user.get("name"):
+            updates["name"] = name
+        if phone and not user.get("phone"):
+            updates["phone"] = phone
+        if age is not None and user.get("age") is None:
+            updates["age"] = age
+        if gender and not user.get("gender"):
+            updates["gender"] = gender
+        if user.get("auth_provider") == "local" and not user.get("google_id"):
+            updates["auth_provider"] = "firebase"
+        db.users.update_one({"_id": user["_id"]}, {"$set": updates})
+        user = db.users.find_one({"_id": user["_id"]})
+    return _session_user(user)
 
 
 # -------------------------------------------------------------- refresh
