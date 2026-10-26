@@ -126,7 +126,7 @@ def vehicle_document():
 @require_auth
 @rate_limit("default")
 def download_document(vid, kind):
-    """Authorized download for the vehicle OWNER only."""
+    """Owner download, or admin/support access while a packet is submitted for review."""
     db = get_db()
     vehicle_id = to_object_id(vid, "vehicle")
     kind = (kind or "").lower()
