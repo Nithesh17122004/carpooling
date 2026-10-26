@@ -23,15 +23,14 @@ from .. import storage
 
 bp = Blueprint("uploads", __name__, url_prefix="/api/uploads")
 
-KINDS = {"dl", "rc", "insurance"}
-CONFIRMATION = {"dl": "driving licence", "rc": "registration certificate", "insurance": "insurance"}
+KINDS = {"dl", "insurance"}
+CONFIRMATION = {"dl": "driving licence", "insurance": "insurance"}
 _ALLOWED_EXT = {"png", "jpg", "jpeg", "webp", "pdf"}
 
 
 def _field_names(kind):
     return {
         "dl": ("dl_document", "licence_verified"),
-        "rc": ("rc_document", "rc_verified"),
         "insurance": ("insurance_document", "insurance_verified"),
     }[kind]
 
@@ -69,7 +68,7 @@ def vehicle_document():
     vehicle_id = to_object_id(request.form.get("vehicle_id") or "", "vehicle")
     kind = (request.form.get("doc") or "dl").strip().lower()
     if kind not in KINDS:
-        raise APIError("doc must be 'dl', 'rc' or 'insurance'.", 422, code="validation_error")
+        raise APIError("doc must be 'dl' or 'insurance'.", 422, code="validation_error")
 
     vehicle = db.vehicles.find_one({"_id": vehicle_id, "user_id": g.user["_id"]})
     if not vehicle:
@@ -133,7 +132,7 @@ def download_document(vid, kind):
     if kind not in KINDS:
         raise APIError("Invalid document kind.", 422, code="validation_error")
     vehicle = db.vehicles.find_one(
-        {"_id": vehicle_id}, {"user_id": 1, "dl_document": 1, "rc_document": 1, "insurance_document": 1, "verification_status": 1})
+        {"_id": vehicle_id}, {"user_id": 1, "dl_document": 1, "insurance_document": 1, "verification_status": 1})
     if not vehicle:
         raise APIError("Vehicle not found.", 404, code="not_found")
     is_owner = str(vehicle["user_id"]) == str(g.user["_id"])
