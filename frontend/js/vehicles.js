@@ -89,8 +89,12 @@ function card(v) {
       </div>
       <div class="flex items-center justify-between" style="font-size:12.5px;margin-top:8px">
         <span class="text-faint">Registration certificate (RC)</span>
-        ${docSlot('rc', v, 'RC')}
+        <span class="badge ${v.rc?.rc_status === 'approved' ? 'badge--success' : 'badge--ghost'}">${h(v.rc?.rc_status || 'not submitted')}</span>
       </div>
+      ${v.rc?.has_document ? '<button type="button" class="badge badge--success mt-8" data-view-rc="' + h(v.id) + '">View submitted RC</button>' : ''}
+      ${v.rc?.rc_number_masked ? '<p class="text-faint text-xs mt-8">RC number: ' + h(v.rc.rc_number_masked) + '</p>' : ''}
+      ${v.rc?.reason ? '<p class="text-faint text-sm mt-8">RC review note: ' + h(v.rc.reason) + '</p>' : ''}
+      ${v.rc?.can_submit ? '<div class="flex gap-8 mt-8" style="align-items:center"><input class="input" data-rc-number="' + h(v.id) + '" placeholder="RC number" aria-label="RC number" style="max-width:180px"><label class="badge badge--ghost" style="cursor:pointer">Upload RC<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" hidden data-rc-doc="' + h(v.id) + '"></label></div>' : ''}
       <div class="flex items-center justify-between" style="font-size:12.5px;margin-top:8px">
         <span class="text-faint">Insurance</span>
         ${docSlot('insurance', v, 'insurance')}
@@ -113,6 +117,32 @@ function docSlot(kind, v, label) {
 }
 
 function wireDocs(grid, vehicles) {
+  grid.querySelectorAll('[data-view-rc]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const blob = await Api.downloadVehicleDoc('/api/kyc/vehicles/' + button.dataset.viewRc + '/rc/document');
+        const tab = window.open(URL.createObjectURL(blob), '_blank');
+        if (tab) tab.opener = null;
+        else toast('Your browser blocked the document tab. Allow pop-ups and try again.', 'error');
+      } catch (err) { toast(errMsg(err), 'error'); }
+      finally { button.disabled = false; }
+    });
+  });
+  grid.querySelectorAll('[data-rc-doc]').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      const number = [...grid.querySelectorAll('[data-rc-number]')].find((el) => el.dataset.rcNumber === input.dataset.rcDoc)?.value?.trim();
+      if (!number) { toast('Enter the RC number before uploading the document.', 'error'); return; }
+      input.disabled = true;
+      try {
+        await Api.submitRc(input.dataset.rcDoc, number, file);
+        toast('RC submitted for manual review.', 'success');
+        await renderVehicles(document.getElementById('view'));
+      } catch (err) { toast(errMsg(err), 'error'); input.disabled = false; }
+    });
+  });
   grid.querySelectorAll('[data-view-doc]').forEach((button) => {
     button.addEventListener('click', async () => {
       button.disabled = true;
@@ -180,10 +210,10 @@ function vehicleFormModal(v, onSaved) {
           <div class="grid-2">
             <div class="field"><label>Driving licence no.</label>
               <input class="input" name="dl_number" value="${v ? h(v.dl_number || '') : ''}" placeholder="KA05 1993 0123456" /></div>
-            <div class="field"><label>RC number</label>
-              <input class="input" name="rc_number" value="${v ? h(v.rc_number || '') : ''}" placeholder="Vehicle registration / RC number" /></div>
+            <div class="field"><label>Insurance policy no.</label>
+              <input class="input" name="insurance_number" value="${v ? h(v.insurance_number || '') : ''}" placeholder="Insurance policy number" />
           </div>
-          <div class="field"><label>Insurance policy no.</label>
+          <div class="field"><label>Colour <span class="text-faint">(optional)</span></label>
             <input class="input" name="insurance_number" value="${v ? h(v.insurance_number || '') : ''}" placeholder="Insurance policy number" />
           </div>
           <div class="field"><label>Colour <span class="text-faint">(optional)</span></label>
