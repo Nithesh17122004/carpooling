@@ -34,7 +34,7 @@ Evidence links:
 - [ ] Set `FIREBASE_WEB_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID`, and `FIREBASE_APP_ID` in Render. These web config values are public identifiers, not service-account secrets.
 - [ ] Create a least-privilege service account for Firebase Admin token verification and set its full JSON as the Render secret `FIREBASE_SERVICE_ACCOUNT_JSON`. Never commit or paste the JSON into chat.
 - [ ] Test send-link, expired/invalid links, verified-email enforcement, existing-account linking, session creation, logout, and link completion on desktop/mobile.
-- [ ] Keep existing password login available during migration. Do not enable a mandatory provider-only rollout until Firebase sign-in and account recovery are tested; revoke the Resend key previously exposed in chat if it has not already been rotated.
+- [ ] Keep `FIREBASE_AUTH_ENFORCE=false` during staging. After successful end-to-end tests, set `FIREBASE_AUTH_ENFORCE=true` in Render to require Firebase email-link sign-in; confirm the Firebase button is visible before enabling it. Revoke the Resend key previously exposed in chat if it has not already been rotated.
 
 ### 3. Decide payout operations
 - [ ] Choose **manual payouts** for a tightly controlled initial launch, with dual approval, bank-reference recording, reconciliation and an owner responsible for each payout; OR choose RazorpayX and complete provider onboarding plus signed payout webhook tests.
