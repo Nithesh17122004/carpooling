@@ -159,6 +159,12 @@ async function wireFirebase(root, isLogin) {
   const slot = root.querySelector('#firebaseSlot');
   if (!slot) return;
   if (!(await isFirebaseEnabled())) { slot.remove(); return; }
+  const form = root.querySelector(isLogin ? '#loginForm' : '#signupForm');
+  if (form) {
+    const passwordField = form.querySelector('#password, #npassword')?.closest('.field');
+    if (passwordField) passwordField.hidden = true;
+    form.querySelector('button[type="submit"]')?.remove();
+  }
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'btn btn-outline btn-block';
@@ -221,6 +227,10 @@ export function renderAuth(root, path) {
   wireFirebase(root, isLogin);
 
   const handle = async (form) => {
+    if (await isFirebaseEnabled()) {
+      toast('Use the secure email-link button to continue.', 'info');
+      return;
+    }
     const values = new FormData(form);
     try {
       if (isLogin) {
