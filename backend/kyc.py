@@ -36,7 +36,7 @@ KYC_REJECTED = "rejected"
 
 KYC_STATES = {KYC_UNVERIFIED, KYC_SUBMITTED, KYC_VERIFIED, KYC_REJECTED}
 
-# Only these two document slots participate in verification.
+# DL and insurance use this vehicle KYC workflow; RC is reviewed separately.
 REQUIRED_DOCUMENTS = ("dl_document", "insurance_document")
 REQUIRED_FIELDS = ("dl_number", "insurance_number")
 

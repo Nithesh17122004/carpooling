@@ -145,6 +145,17 @@ class Config:
     )
     GOOGLE_VERIFY_AUDIENCE = _env_bool("GOOGLE_VERIFY_AUDIENCE", True)
 
+    # Firebase email-link authentication. Web config is public; the service-account
+    # JSON is a server-only secret used to verify Firebase ID tokens.
+    FIREBASE_WEB_API_KEY = _env("FIREBASE_WEB_API_KEY", "")
+    FIREBASE_AUTH_DOMAIN = _env("FIREBASE_AUTH_DOMAIN", "")
+    FIREBASE_PROJECT_ID = _env("FIREBASE_PROJECT_ID", "")
+    FIREBASE_APP_ID = _env("FIREBASE_APP_ID", "")
+    FIREBASE_SERVICE_ACCOUNT_JSON = _env("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+    # Keep password auth available during staged rollout; set true only after
+    # Firebase email-link sign-in and account recovery are verified in staging.
+    FIREBASE_AUTH_ENFORCE = _env_bool("FIREBASE_AUTH_ENFORCE", False)
+
     # Redis (rate limiting + realtime pub/sub + live locations)
     REDIS_URL = _env("REDIS_URL", "")
     REDIS_NOTIFY_CHANNEL = _env("NOTIFY_REDIS_CHANNEL", "ridemate:events")

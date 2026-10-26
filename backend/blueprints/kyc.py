@@ -263,7 +263,17 @@ def rc_queue():
     """Registration certificates waiting on a human."""
     limit = min(int(request.args.get("limit", 50) or 50), 200)
     skip = max(int(request.args.get("skip", 0) or 0), 0)
-    return {"ok": True, "queue": rc.review_queue(limit=limit, skip=skip)}
+    db = get_db()
+    queue = rc.review_queue(limit=limit, skip=skip)
+    for item in queue:
+        vehicle = db.vehicles.find_one({"_id": to_object_id(item["vehicle_id"], "vehicle")},
+                                       {"user_id": 1}) or {}
+        owner = db.users.find_one({"_id": vehicle.get("user_id")},
+                                  {"name": 1, "email": 1, "phone": 1}) or {}
+        item["owner"] = {"name": owner.get("name", ""),
+                         "email": owner.get("email", ""),
+                         "phone": owner.get("phone", "")}
+    return {"ok": True, "queue": queue}
 
 
 @bp.post("/admin/identity/<uid>/review")

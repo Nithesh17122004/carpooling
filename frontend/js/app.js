@@ -3,6 +3,8 @@
 import { store, Api, restoreSession } from './api.js';
 import { icon, assetUrl, h, toast, closeOpenModal, errMsg } from './ui.js';
 import { renderAuth } from './auth.js';
+import { renderAdminKyc } from './admin-kyc.js';
+import { completeFirebaseEmailLink } from './firebase-email-link.js';
 import { renderDiscover } from './discover.js';
 import { renderRide } from './ride.js';
 import { renderPublish } from './publish.js';
@@ -27,6 +29,7 @@ const TITLES = {
   '/ride': 'Ride details · RideMate',
   '/login': 'Log in · RideMate',
   '/signup': 'Create account · RideMate',
+  '/admin-kyc': 'Driver document review · RideMate',
 };
 
 function parseHash() {
@@ -65,8 +68,11 @@ function buildNav() {
     return `<a class="nav-link" data-nav="${item.key}" href="${item.href}">${icon(NAV_ICON[item.key] || 'info')}${item.label}</a>`;
   };
 
-  sideNav.innerHTML = NAV.map((n) => link(n, false)).join('');
-  bottomNav.innerHTML = NAV.map((n) => link(n, true)).join('');
+  const items = store.user && ['admin', 'support'].includes(store.user.role)
+    ? [...NAV, { key: 'admin-kyc', href: '#/admin-kyc', label: 'KYC Review', auth: true }]
+    : NAV;
+  sideNav.innerHTML = items.map((n) => link(n, false)).join('');
+  bottomNav.innerHTML = items.map((n) => link(n, true)).join('');
 }
 
 function setActiveNav(path) {
@@ -118,6 +124,10 @@ async function route() {
 
   // everything else requires auth
   if (!store.user) { location.replace('#/login'); return; }
+  if (path === '/admin-kyc' && !['admin', 'support'].includes(store.user.role)) {
+    location.replace('#/discover');
+    return;
+  }
 
   showShell(true);
   hydrateUser();
@@ -143,6 +153,7 @@ async function route() {
     case '/trips': load((v) => renderTrips(v, query)); break;
     case '/vehicles': load((v) => renderVehicles(v, query)); break;
     case '/profile': load((v) => renderProfile(v, query)); break;
+    case '/admin-kyc': load(renderAdminKyc); break;
     default: location.replace('#/discover');
   }
 }
@@ -158,6 +169,7 @@ function attachGlobalEvents() {
 
   window.addEventListener('ridemate:authed', () => {
     hydrateUser();
+    buildNav();
     location.replace('#/discover');
   });
 
@@ -206,7 +218,9 @@ async function bootSplash() {
 async function boot() {
   buildNav();
   attachGlobalEvents();
+  await completeFirebaseEmailLink();
   await bootSplash();
+  buildNav();
   route();
 }
 

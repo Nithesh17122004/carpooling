@@ -149,6 +149,7 @@ export const Api = {
   register: (b) => post('/api/auth/register', b),
   login: (b) => post('/api/auth/login', b),
   google: (b) => post('/api/auth/google', b),
+  firebaseSession: (b) => post('/api/auth/firebase', b),
   me: () => get('/api/auth/me'),
   providers: () => get('/api/auth/providers'),
   sendVerificationEmail: () => post('/api/auth/verify-email/send', {}),
@@ -170,6 +171,36 @@ export const Api = {
   // vehicles
   vehicles: () => get('/api/vehicles'),
   vehicle: (id) => get(`/api/vehicles/${id}`),
+  submitVehicleVerification: (id) => post(`/api/vehicles/${id}/submit-verification`, {}),
+  submitRc: (id, rcNumber, file) => {
+    const fd = new FormData();
+    fd.append('rc_number', rcNumber);
+    fd.append('file', file);
+    return request('POST', `/api/kyc/vehicles/${id}/rc`, { form: fd });
+  },
+  rcStatus: (id) => get(`/api/kyc/vehicles/${id}/rc`),
+  rcQueue: () => get('/api/kyc/admin/rc/queue'),
+  reviewRc: (id, payload) => post(`/api/kyc/admin/vehicles/${id}/rc/review`, payload),
+  pendingVehicleReviews: () => get('/api/admin/vehicles/pending'),
+  reviewVehicle: (id, payload) => post(`/api/admin/vehicles/${id}/verify`, payload),
+  downloadVehicleDoc: async (path) => {
+    const run = () => fetch(API_BASE + path, {
+      headers: store.token ? { Authorization: `Bearer ${store.token}` } : {},
+      credentials: 'include',
+    });
+    let res = await run();
+    if (res.status === 401) {
+      await refreshAccessToken();
+      res = await run();
+    }
+    if (!res.ok) {
+      let data = null;
+      try { data = await res.json(); } catch { /* noop */ }
+      const err = (data && data.error) || {};
+      throw new ApiError(err.message || `Document request failed (${res.status})`, res.status, err.code, err.details);
+    }
+    return res.blob();
+  },
   createVehicle: (b) => post('/api/vehicles', b),
   updateVehicle: (id, b) => patch(`/api/vehicles/${id}`, b),
   deleteVehicle: (id) => del(`/api/vehicles/${id}`),

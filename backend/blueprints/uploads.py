@@ -13,6 +13,8 @@ Upload hardening (Part 15):
     path traversal).
 """
 
+import secrets
+
 from flask import Blueprint, Response, g, request
 
 from ..db import get_db, to_object_id, utcnow
@@ -20,6 +22,7 @@ from ..errors import APIError
 from ..ratelimit import rate_limit
 from ..security import random_token, require_auth
 from .. import storage
+from ..documents import store_private_document, load_private_document, delete_private_document
 
 bp = Blueprint("uploads", __name__, url_prefix="/api/uploads")
 
@@ -75,41 +78,30 @@ def vehicle_document():
         raise APIError("Vehicle not found.", 404, code="not_found")
 
     data, original_name = _read_upload()
-    declared = _declared_extension(original_name)
-    declared_norm = "jpg" if declared in ("jpg", "jpeg") else declared
-    if declared and declared_norm not in _ALLOWED_EXT:
-        raise APIError("Documents must be PDF or an image (PNG, JPG, WEBP).",
-                       422, code="invalid_file")
-    ext, content_type = storage.detect_extension(data, original_name)
-    if content_type not in ("application/pdf", "image/png", "image/jpeg", "image/webp"):
-        raise APIError("Documents must be PDF or an image (PNG, JPG, WEBP).", 422, code="invalid_file")
-    if declared and declared_norm != ext and not (declared in ("jpg", "jpeg") and ext in ("jpg", "jpeg")):
-        raise APIError("File extension does not match its contents.", 422, code="invalid_file")
-
-    key = storage.document_key(g.user["_id"], kind, ext)
-    storage.save_to_key(key, data, content_type)
-
     doc_field, verified_field = _field_names(kind)
     old = vehicle.get(doc_field) or {}
+    doc_id = secrets.token_hex(12)
+    metadata = store_private_document(
+        g.user["_id"], kind, doc_id, data, original_name,
+        extra={"status": "uploaded", "original_name": (original_name or "document")[:120]},
+    )
+    key = metadata["key"]
     res = db.vehicles.update_one(
         {"_id": vehicle_id, "user_id": g.user["_id"]},
         {"$set": {
-            doc_field: {
-                "key": key,
-                "content_type": content_type,
-                "size": len(data),
-                "original_name": (original_name or "document")[:120],
-                "status": "uploaded",
-                "uploaded_at": utcnow(),
-            },
-            verified_field: False,  # a human/verification step must flip this on
+            doc_field: metadata,
+            verified_field: False,
             "updated_at": utcnow(),
         }},
     )
-    if old.get("key") and old.get("key") != key:
-        storage.delete_key(old["key"])
     if not res.modified_count:
+        delete_private_document(key)
         raise APIError("Vehicle not found.", 404, code="not_found")
+    if old.get("key") and old.get("key") != key:
+        if old["key"].startswith("private/"):
+            delete_private_document(old["key"])
+        else:
+            storage.delete_key(old["key"])
 
     # A new document re-opens verification. Without this a driver could get a
     # vehicle approved once and then swap in different papers, which is the
@@ -125,23 +117,34 @@ def vehicle_document():
 @require_auth
 @rate_limit("default")
 def download_document(vid, kind):
-    """Authorized download for the vehicle OWNER only."""
+    """Owner download, or admin/support access while a packet is submitted for review."""
     db = get_db()
     vehicle_id = to_object_id(vid, "vehicle")
     kind = (kind or "").lower()
     if kind not in KINDS:
         raise APIError("Invalid document kind.", 422, code="validation_error")
     vehicle = db.vehicles.find_one(
-        {"_id": vehicle_id}, {"user_id": 1, "dl_document": 1, "insurance_document": 1})
+        {"_id": vehicle_id}, {"user_id": 1, "dl_document": 1, "insurance_document": 1, "verification_status": 1})
     if not vehicle:
         raise APIError("Vehicle not found.", 404, code="not_found")
-    if str(vehicle["user_id"]) != str(g.user["_id"]):
+    is_owner = str(vehicle["user_id"]) == str(g.user["_id"])
+    is_reviewer = g.user.get("role") in ("admin", "support") and vehicle.get("verification_status") == "submitted"
+    if not (is_owner or is_reviewer):
         raise APIError("Vehicle not found.", 404, code="not_found")
 
     doc = vehicle.get(f"{kind}_document") or {}
     if not doc.get("key"):
         raise APIError("Document not uploaded.", 404, code="not_found")
-    data, content_type, name = storage.read_key(doc["key"])
+    if doc.get("doc_id") and doc["key"].startswith("private/"):
+        data, content_type = load_private_document(vehicle["user_id"], kind, doc["doc_id"], doc["key"])
+        name = storage.safe_filename(doc.get("original_name") or f"{kind}-document")
+    else:
+        # Backward-compatible read for legacy uploads; new uploads are encrypted.
+        data, content_type, name = storage.read_key(doc["key"])
+    if is_reviewer:
+        from flask import current_app
+        current_app.logger.info("KYC document reviewed: reviewer_role=%s vehicle_id=%s kind=%s",
+                                g.user.get("role"), str(vehicle_id), kind)
     return Response(data, mimetype=content_type, headers={
         "Content-Disposition": f'attachment; filename="{name}"',
         "Cache-Control": "private, no-store",

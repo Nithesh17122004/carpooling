@@ -9,6 +9,7 @@ python-dotenv==1.0.1
 
 # Provider SDKs (runtime imports are guarded; install for production use)
 google-auth>=2.30.0
+firebase-admin>=6.5.0,<8.0.0
 razorpay>=1.4.0
 boto3>=1.34.0
 redis>=5.0.0

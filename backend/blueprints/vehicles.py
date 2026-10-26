@@ -117,6 +117,8 @@ def clean_vehicle(v):
     # vehicle is refused for publishing, and the owner must never be able to set
     # it themselves.
     out["kyc"] = kyc_summary(v)
+    from ..rc import rc_summary
+    out["rc"] = rc_summary(v)
     out["verification_status"] = out["kyc"]["verification_status"]
     return out
 
@@ -215,6 +217,21 @@ def update_vehicle(vid):
             raise APIError(
                 "A vehicle with this number already exists.", 409, code="duplicate_vehicle")
 
+    identity_fields = ("vehicle_number", "dl_number", "rc_number", "insurance_number")
+    identity_changed = any(key in fields and fields[key] != existing.get(key) for key in identity_fields)
+    if identity_changed:
+        # An approval applies to the exact identity details reviewed. Changing
+        # DL/RC/insurance or the registration plate must reopen manual review.
+        fields.update({
+            "verification_status": "unverified",
+            "kyc_submitted_at": None,
+            "kyc_reviewed_at": None,
+            "kyc_reviewed_by": None,
+            "kyc_reason": None,
+            "licence_verified": False,
+            "rc_verified": False,
+            "insurance_verified": False,
+        })
     fields["updated_at"] = utcnow()
     get_db().vehicles.update_one({"_id": vehicle_id}, {"$set": fields})
     vehicle = get_db().vehicles.find_one({"_id": vehicle_id})

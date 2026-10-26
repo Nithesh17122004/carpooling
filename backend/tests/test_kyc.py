@@ -196,6 +196,25 @@ def test_admin_approval_verifies_the_vehicle(client, db, admin, driver):
                                 ).get_json()["vehicle"]).status_code == 201
 
 
+def test_admin_can_review_submitted_dl_insurance_packet(client, db, admin, driver):
+    vid = _complete_kyc(client, db, driver, 20)
+    client.post(f"/api/vehicles/{vid}/submit-verification", headers=driver["auth"], json={})
+
+    queue = client.get("/api/admin/vehicles/pending", headers=admin["auth"])
+    assert queue.status_code == 200, queue.get_json()
+    packet = next(item for item in queue.get_json()["data"] if item["id"] == vid)
+    assert packet["documents"]["dl"].endswith("/dl")
+    assert packet["documents"]["insurance"].endswith("/insurance")
+
+    dl = client.get(packet["documents"]["dl"], headers=admin["auth"])
+    assert dl.status_code == 200
+    approved = client.post(f"/api/admin/vehicles/{vid}/verify", headers=admin["auth"],
+                           json={"decision": "approve"})
+    assert approved.status_code == 200
+    # Reviewer access is intentionally closed after the packet leaves the queue.
+    assert client.get(packet["documents"]["dl"], headers=admin["auth"]).status_code == 404
+
+
 def test_rejection_requires_a_reason(client, db, admin, driver):
     vid = _complete_kyc(client, db, driver, 5)
     client.post(f"/api/vehicles/{vid}/submit-verification", headers=driver["auth"], json={})

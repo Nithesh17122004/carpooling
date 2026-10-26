@@ -516,6 +516,38 @@ def submit_payout(pid):
     return {"ok": True, "payout": _clean_payout(payout)}
 
 
+@bp.get("/vehicles/pending")
+@require_admin
+@rate_limit("default")
+def pending_vehicle_reviews():
+    """Private manual-review queue for submitted DL, RC and insurance packets."""
+    db = get_db()
+    rows = list(db.vehicles.find({"verification_status": "submitted"})
+                .sort("kyc_submitted_at", 1).limit(100))
+    items = []
+    for vehicle in rows:
+        owner = db.users.find_one({"_id": vehicle.get("user_id")},
+                                  {"name": 1, "email": 1, "phone": 1}) or {}
+        vid = str(vehicle["_id"])
+        items.append({
+            "id": vid,
+            "owner": {"id": str(vehicle.get("user_id") or ""),
+                      "name": owner.get("name", ""), "email": owner.get("email", ""),
+                      "phone": owner.get("phone", "")},
+            "vehicle_number": vehicle.get("vehicle_number", ""),
+            "vehicle_model": vehicle.get("vehicle_model", ""),
+            "vehicle_type": vehicle.get("vehicle_type", ""),
+            "dl_number": vehicle.get("dl_number", ""),
+            "insurance_number": vehicle.get("insurance_number", ""),
+            "documents": {
+                "dl": f"/api/uploads/vehicle-doc/{vid}/dl" if (vehicle.get("dl_document") or {}).get("key") else None,
+                "insurance": f"/api/uploads/vehicle-doc/{vid}/insurance" if (vehicle.get("insurance_document") or {}).get("key") else None,
+            },
+            "submitted_at": iso_utc(vehicle.get("kyc_submitted_at")),
+        })
+    return {"ok": True, "data": items, "total": len(items)}
+
+
 @bp.post("/vehicles/<vid>/verify")
 @require_admin
 @rate_limit("strict")
