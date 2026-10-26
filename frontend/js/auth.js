@@ -2,7 +2,7 @@
 
 import { Api, store } from './api.js';
 import { icon, bindForm, toast, errMsg, fieldError } from './ui.js';
-import { isFirebaseEnabled, sendFirebaseEmailLink } from './firebase-email-link.js';
+import { isFirebaseEnabled, isFirebaseEnforced, sendFirebaseEmailLink } from './firebase-email-link.js';
 
 function brand(light = true) {
   return `<a class="brand" href="#/login" style="${light ? 'color:#fff' : ''}">
@@ -160,7 +160,7 @@ async function wireFirebase(root, isLogin) {
   if (!slot) return;
   if (!(await isFirebaseEnabled())) { slot.remove(); return; }
   const form = root.querySelector(isLogin ? '#loginForm' : '#signupForm');
-  if (form) {
+  if (form && await isFirebaseEnforced()) {
     const passwordField = form.querySelector('#password, #npassword')?.closest('.field');
     if (passwordField) passwordField.hidden = true;
     form.querySelector('button[type="submit"]')?.remove();
@@ -227,7 +227,7 @@ export function renderAuth(root, path) {
   wireFirebase(root, isLogin);
 
   const handle = async (form) => {
-    if (await isFirebaseEnabled()) {
+    if (await isFirebaseEnforced()) {
       toast('Use the secure email-link button to continue.', 'info');
       return;
     }
