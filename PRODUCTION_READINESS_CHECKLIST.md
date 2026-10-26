@@ -45,7 +45,8 @@ Evidence links:
 - [x] Selected approach: human review first; no automatic government-record verification claim.
 - [x] Vehicle KYC submission requires DL number/document and insurance number/document; replacing either document or changing identity details reopens review.
 - [x] RC uses its existing separate encrypted workflow: submit via the vehicle RC form, review in the RC queue, and approve/reject with a reason.
-- [x] Admin-only DL/insurance and RC review queues are available. DL/insurance reviewers can access documents while a packet is submitted; RC bytes use the encrypted private-document endpoint.
+- [x] Admin-only DL/insurance and RC review queues are available in the app at `#/admin-kyc`. DL/insurance reviewers can access documents while a packet is submitted; RC bytes use the existing encrypted private-document endpoint.
+- [x] New DL and insurance uploads are encrypted at rest; legacy documents remain readable until replaced, at which point the legacy copy is deleted.
 - [ ] Appoint trained reviewers; define review SLA, rejection reasons/appeals, and a second-person escalation for suspicious documents.
 - [ ] Exercise the pending queue with a test vehicle, compare name/number/validity/vehicle class and plate details, approve one packet, reject another, and verify an unreviewed driver cannot publish.
 - [ ] Set a strong `DOCUMENT_ENCRYPTION_KEY` in Render secrets; verify document access controls and retention/deletion policy before real identity documents are uploaded.
