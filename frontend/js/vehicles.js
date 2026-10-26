@@ -43,6 +43,19 @@ export async function renderVehicles(root) {
       grid.querySelectorAll('[data-del]').forEach((el) => {
         el.addEventListener('click', () => deleteVehicle(el.dataset.del, refresh));
       });
+      grid.querySelectorAll('[data-submit-kyc]').forEach((el) => {
+        el.addEventListener('click', async () => {
+          el.disabled = true;
+          try {
+            await Api.submitVehicleVerification(el.dataset.submitKyc);
+            toast('Documents submitted for manual review.', 'success');
+            await refresh();
+          } catch (err) {
+            toast(errMsg(err), 'error');
+            el.disabled = false;
+          }
+        });
+      });
       wireDocs(grid, res.data);
     } catch (err) {
       grid.innerHTML = emptyState({ ic: 'alert', title: 'Could not load vehicles', desc: errMsg(err) });
@@ -75,9 +88,18 @@ function card(v) {
         ${docSlot('dl', v, 'licence')}
       </div>
       <div class="flex items-center justify-between" style="font-size:12.5px;margin-top:8px">
+        <span class="text-faint">Registration certificate (RC)</span>
+        ${docSlot('rc', v, 'RC')}
+      </div>
+      <div class="flex items-center justify-between" style="font-size:12.5px;margin-top:8px">
         <span class="text-faint">Insurance</span>
         ${docSlot('insurance', v, 'insurance')}
       </div>
+      <div class="flex items-center justify-between" style="font-size:12.5px;margin-top:12px">
+        <span class="badge ${v.verification_status === 'verified' ? 'badge--success' : 'badge--ghost'}">${h((v.verification_status || 'unverified').replaceAll('_', ' '))}</span>
+        ${v.kyc?.can_submit ? '<button class="btn btn-outline btn-sm" data-submit-kyc="' + h(v.id) + '">Submit for review</button>' : ''}
+      </div>
+      ${v.verification_status === 'rejected' && v.kyc?.reason ? '<p class="text-faint text-sm mt-8">Review note: ' + h(v.kyc.reason) + '</p>' : ''}
     </div>
   </article>`;
 }
@@ -143,8 +165,11 @@ function vehicleFormModal(v, onSaved) {
           <div class="grid-2">
             <div class="field"><label>Driving licence no.</label>
               <input class="input" name="dl_number" value="${v ? h(v.dl_number || '') : ''}" placeholder="KA05 1993 0123456" /></div>
-            <div class="field"><label>Insurance no.</label>
-              <input class="input" name="insurance_number" value="${v ? h(v.insurance_number || '') : ''}" placeholder="Optional" /></div>
+            <div class="field"><label>RC number</label>
+              <input class="input" name="rc_number" value="${v ? h(v.rc_number || '') : ''}" placeholder="Vehicle registration / RC number" /></div>
+          </div>
+          <div class="field"><label>Insurance policy no.</label>
+            <input class="input" name="insurance_number" value="${v ? h(v.insurance_number || '') : ''}" placeholder="Insurance policy number" />
           </div>
           <div class="field"><label>Colour <span class="text-faint">(optional)</span></label>
             <input class="input" name="color" value="${v ? h(v.color || '') : ''}" placeholder="e.g. Pearl White" /></div>
