@@ -107,12 +107,25 @@ function card(v) {
 function docSlot(kind, v, label) {
   const url = v[`${kind}_document_url`];
   return url
-    ? `<a class="badge badge--success" href="${h(assetUrl(url))}" target="_blank" rel="noopener" title="View uploaded ${label}">${icon('check', 12)} ${label}</a>`
+    ? `<button type="button" class="badge badge--success" data-view-doc data-url="${h(url)}" title="View uploaded ${label}">${icon('check', 12)} ${label}</button>`
     : `<label class="badge badge--ghost" style="cursor:pointer" title="Upload ${label}">${icon('upload', 12)} add
         <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" hidden data-doc="${kind}" data-vid="${v.id}" /></label>`;
 }
 
 function wireDocs(grid, vehicles) {
+  grid.querySelectorAll('[data-view-doc]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const blob = await Api.downloadVehicleDoc(button.dataset.url);
+        window.open(URL.createObjectURL(blob), '_blank', 'noopener');
+      } catch (err) {
+        toast(errMsg(err), 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
   grid.querySelectorAll('[data-doc]').forEach((input) => {
     input.addEventListener('change', async () => {
       if (!input.files || !input.files[0]) return;
