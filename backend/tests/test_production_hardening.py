@@ -831,9 +831,11 @@ def test_admin_overview_extras_populated(client, db, admin, driver, rider, vehic
         "details": "driving aggressively"})
 
     ride, _b, _pay = _book_pending(client, driver, rider, vehicle, fare=60)
-    client.post("/api/safety/sos", headers=rider["auth"], json={"ride_id": ride["id"]})
+    # SOS is available only after the rider has a confirmed booking on the ride.
     v = client.post(f"/api/bookings/{_b['id']}/verify", headers=rider["auth"], json={})
     assert v.status_code == 200, v.get_json()
+    sos = client.post("/api/safety/sos", headers=rider["auth"], json={"ride_id": ride["id"]})
+    assert sos.status_code == 200, sos.get_json()
 
     # ratings only open once the ride departs -> rewind the departure time
     from backend.timeutil import utc_now
