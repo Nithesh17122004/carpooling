@@ -307,7 +307,7 @@ def validate_runtime(app_config) -> None:
         if _placeholder(app_config.get("EMAIL_FROM")) or "example.com" in sender:
             problems.append("EMAIL_FROM must be a real verified sender when email verification is mandatory")
 
-    if _placeholder(app_config.get("JWT_SECRET"))
+    if _placeholder(app_config.get("JWT_SECRET")):
         problems.append("JWT_SECRET")
     if _placeholder(app_config.get("SECRET_KEY")) and _placeholder(app_config.get("APP_SECRET")):
         problems.append("SECRET_KEY/APP_SECRET")
