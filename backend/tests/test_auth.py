@@ -106,6 +106,25 @@ def test_google_email_not_accepted(client, db):
         assert r.get_json()["error"]["code"] == "missing_fields"
 
 
+def test_firebase_config_disables_password_auth_routes(client, monkeypatch):
+    cfg = client.application.config
+    for key, value in {
+        "FIREBASE_WEB_API_KEY": "public-api-key",
+        "FIREBASE_AUTH_DOMAIN": "ridemate-test.firebaseapp.com",
+        "FIREBASE_PROJECT_ID": "ridemate-test",
+        "FIREBASE_APP_ID": "test-app-id",
+        "FIREBASE_SERVICE_ACCOUNT_JSON": "{\"project_id\":\"ridemate-test\"}",
+    }.items():
+        monkeypatch.setitem(cfg, key, value)
+    register = client.post("/api/auth/register", json={
+        "name": "Firebase User", "email": "firebase@test.in", "password": "Password123"})
+    assert register.status_code == 409
+    assert register.get_json()["error"]["code"] == "firebase_email_link_required"
+    login = client.post("/api/auth/login", json={"email": "old@test.in", "password": "Password123"})
+    assert login.status_code == 409
+    assert login.get_json()["error"]["code"] == "firebase_email_link_required"
+
+
 def test_firebase_email_link_requires_server_configuration(client, db):
     r = client.post("/api/auth/firebase", json={"id_token": "fake.firebase.id.token"})
     assert r.status_code == 503
