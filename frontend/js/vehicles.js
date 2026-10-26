@@ -215,9 +215,6 @@ function vehicleFormModal(v, onSaved) {
             </div>
           </div>
           <div class="field"><label>Colour <span class="text-faint">(optional)</span></label>
-            <input class="input" name="insurance_number" value="${v ? h(v.insurance_number || '') : ''}" placeholder="Insurance policy number" />
-          </div>
-          <div class="field"><label>Colour <span class="text-faint">(optional)</span></label>
             <input class="input" name="color" value="${v ? h(v.color || '') : ''}" placeholder="e.g. Pearl White" /></div>
           <div class="field"><label>Notes <span class="text-faint">(optional)</span></label>
             <textarea class="textarea" name="notes" placeholder="Anything riders should know" style="min-height:60px">${v ? h(v.notes || '') : ''}</textarea></div>
