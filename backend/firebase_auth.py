@@ -6,7 +6,7 @@ configuration is public; FIREBASE_SERVICE_ACCOUNT_JSON is a server-side secret.
 import json
 
 from flask import current_app
-from ..errors import APIError
+from .errors import APIError
 
 
 def firebase_is_configured(config):
