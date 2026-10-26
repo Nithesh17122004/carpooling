@@ -43,6 +43,15 @@ export async function isFirebaseEnabled() {
   }
 }
 
+export async function isFirebaseEnforced() {
+  try {
+    const data = await Api.providers();
+    return Boolean(data?.providers?.firebase && data?.providers?.firebase_enforced);
+  } catch {
+    return false;
+  }
+}
+
 export async function sendFirebaseEmailLink(email, profile = {}) {
   const cleanEmail = String(email || '').trim().toLowerCase();
   if (!cleanEmail) throw new Error('Enter your email address first.');
