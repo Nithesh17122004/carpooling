@@ -85,3 +85,48 @@ def test_create_app_with_production_config_fails_fast():
 
     with pytest.raises(RuntimeError):
         create_app(ProductionConfig)
+
+def test_production_redis_unavailable_fails_closed(monkeypatch):
+    """Production must not silently downgrade distributed rate limiting."""
+    import sys
+    from types import SimpleNamespace
+    from flask import Flask
+    from backend.app import _init_redis
+
+    class UnavailableRedis:
+        @staticmethod
+        def from_url(*args, **kwargs):
+            class Client:
+                @staticmethod
+                def ping():
+                    raise ConnectionError("redis unavailable")
+            return Client()
+
+    monkeypatch.setitem(sys.modules, "redis", SimpleNamespace(Redis=UnavailableRedis))
+    app = Flask(__name__)
+    app.config.update(ENV="production", REDIS_URL="redis://redis.internal:6379/0")
+    with pytest.raises(RuntimeError, match="Redis is required in production"):
+        _init_redis(app)
+
+
+def test_development_redis_unavailable_keeps_local_fallback(monkeypatch):
+    """Local development remains usable without a Redis service."""
+    import sys
+    from types import SimpleNamespace
+    from flask import Flask
+    from backend.app import _init_redis
+
+    class UnavailableRedis:
+        @staticmethod
+        def from_url(*args, **kwargs):
+            class Client:
+                @staticmethod
+                def ping():
+                    raise ConnectionError("redis unavailable")
+            return Client()
+
+    monkeypatch.setitem(sys.modules, "redis", SimpleNamespace(Redis=UnavailableRedis))
+    app = Flask(__name__)
+    app.config.update(ENV="development", REDIS_URL="redis://localhost:6379/0")
+    _init_redis(app)
+    assert app.extensions["rm_redis"] is None

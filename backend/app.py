@@ -206,8 +206,16 @@ def _init_redis(app):
             "Redis connected (realtime + rate limiting active)."
         )
 
-    except Exception:
+    except Exception as exc:
         app.extensions["rm_redis"] = None
+
+        # Production requires a shared Redis instance for distributed rate
+        # limiting and realtime fan-out. Starting with a per-process fallback
+        # silently weakens abuse controls when multiple workers are running.
+        if app.config.get("ENV") == "production":
+            raise RuntimeError(
+                "Redis is required in production but could not be reached."
+            ) from exc
 
         app.logger.warning(
             "Redis unavailable; falling back to in-memory rate limits."

@@ -48,14 +48,17 @@ production:
 
 | Key | Purpose |
 | --- | --- |
-| `SECRET_KEY` | Flask signing (placeholder values fail fast when `FLASK_ENV=production`) |
-| `JWT_SECRET` | 32+ random chars; rotate to invalidate all sessions |
-| `MONGO_URI` | Primary MongoDB (local or Atlas `mongodb+srv://...`) |
-| `MONGO_URI_FALLBACKS` | Comma-separated candidates tried in order; use local mongod as offline fallback |
-| `PAYMENT_PROVIDER` | `demo` (default) or `razorpay` |
-| `GOOGLE_CLIENT_ID` | Set to enable true Google ID-token sign-in; blank ⇒ `503 google_not_configured` |
-| `REDIS_URL` | Optional; gives distributed rate limiting + realtime fan-out |
-| `REFRESH_COOKIE_SECURE` | **Must be `true` behind TLS** |
+| `SECRET_KEY` | Strong, unique secret from a secret manager; placeholders fail the production boot gate |
+| `JWT_SECRET` | Strong, unique secret (32+ random characters); rotate with a planned session invalidation |
+| `MONGO_URI` | Managed production MongoDB/Atlas URI; production rejects localhost candidates |
+| `MONGO_URI_FALLBACKS` | Only use redundant, production-grade database endpoints; never configure localhost as a production fallback |
+| `PAYMENT_PROVIDER` | Must be `razorpay` in production; `demo` is development/test only |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Configure from the provider dashboard and validate with test-mode checkout before launch |
+| `GOOGLE_CLIENT_ID` | Optional; enables verified Google ID-token sign-in |
+| `REDIS_URL` | Required in production for distributed rate limiting and realtime fan-out; startup now fails closed if unavailable |
+| `DOCUMENT_ENCRYPTION_KEY` | Required when production KYC/private-document gates are enabled; keep the key in a secret manager and back it up securely |
+| `FRONTEND_ORIGINS` | Explicit HTTPS origin allow-list; wildcard origins are rejected |
+| `REFRESH_COOKIE_SECURE` | Must be `true` behind TLS (enforced by the production boot gate) |
 
 ## Session & security model
 
