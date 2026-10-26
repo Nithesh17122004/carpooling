@@ -20,7 +20,7 @@ from flask import Blueprint, Response, g, request
 from ..db import get_db, to_object_id, utcnow
 from ..errors import APIError
 from ..ratelimit import rate_limit
-from ..security import random_token, require_auth
+from ..security import random_token, require_auth, safe_filename
 from .. import storage
 from ..documents import store_private_document, load_private_document, delete_private_document
 
@@ -137,7 +137,7 @@ def download_document(vid, kind):
         raise APIError("Document not uploaded.", 404, code="not_found")
     if doc.get("doc_id") and doc["key"].startswith("private/"):
         data, content_type = load_private_document(vehicle["user_id"], kind, doc["doc_id"], doc["key"])
-        name = storage.safe_filename(doc.get("original_name") or f"{kind}-document")
+        name = safe_filename(doc.get("original_name") or f"{kind}-document")
     else:
         # Backward-compatible read for legacy uploads; new uploads are encrypted.
         data, content_type, name = storage.read_key(doc["key"])
