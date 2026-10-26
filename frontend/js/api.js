@@ -171,6 +171,7 @@ export const Api = {
   // vehicles
   vehicles: () => get('/api/vehicles'),
   vehicle: (id) => get(`/api/vehicles/${id}`),
+  submitVehicleVerification: (id) => post(`/api/vehicles/${id}/submit-verification`, {}),
   createVehicle: (b) => post('/api/vehicles', b),
   updateVehicle: (id, b) => patch(`/api/vehicles/${id}`, b),
   deleteVehicle: (id) => del(`/api/vehicles/${id}`),
