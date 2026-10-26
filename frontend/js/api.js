@@ -172,6 +172,15 @@ export const Api = {
   vehicles: () => get('/api/vehicles'),
   vehicle: (id) => get(`/api/vehicles/${id}`),
   submitVehicleVerification: (id) => post(`/api/vehicles/${id}/submit-verification`, {}),
+  submitRc: (id, rcNumber, file) => {
+    const fd = new FormData();
+    fd.append('rc_number', rcNumber);
+    fd.append('file', file);
+    return request('POST', `/api/kyc/vehicles/${id}/rc`, { form: fd });
+  },
+  rcStatus: (id) => get(`/api/kyc/vehicles/${id}/rc`),
+  rcQueue: () => get('/api/kyc/admin/rc/queue'),
+  reviewRc: (id, payload) => post(`/api/kyc/admin/vehicles/${id}/rc/review`, payload),
   pendingVehicleReviews: () => get('/api/admin/vehicles/pending'),
   reviewVehicle: (id, payload) => post(`/api/admin/vehicles/${id}/verify`, payload),
   downloadVehicleDoc: async (path) => {
