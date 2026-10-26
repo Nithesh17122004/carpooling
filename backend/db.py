@@ -45,7 +45,7 @@ def init_db(app):
             client = MongoClient(uri, serverSelectionTimeoutMS=timeout)
             client.admin.command("ping")  # raises if unreachable
             _client, _db, _active_uri = client, client[app.config["MONGO_DB_NAME"]], uri
-            create_indexes()
+            create_indexes(strict=app.config.get("ENV") == "production")
             app.logger.info("MongoDB connected: %s via %s", app.config["MONGO_DB_NAME"], _redact(uri))
             return _db
         except Exception as exc:  # noqa: BLE001 - try the next candidate
@@ -96,7 +96,7 @@ def _unique_string_index(coll, field, name=None):
                       partialFilterExpression={field: {"$type": "string"}})
 
 
-def _payment_booking_unique(coll):
+def _payment_booking_unique(coll, strict=False):
     """At most ONE payment document per booking, enforced by the database.
 
     This index is what makes `create_order` safe. Order creation must claim the
@@ -133,14 +133,16 @@ def _payment_booking_unique(coll):
             if drop:
                 coll.delete_many({"_id": {"$in": drop}})
     except Exception:  # noqa: BLE001 - no duplicates is the common case
-        pass
+        if strict:
+            raise
 
     if existing:
         coll.drop_index(name)
     try:
         coll.create_index([("booking_id", 1)], unique=True)
     except Exception:  # noqa: BLE001 - concurrent index build; next start retries
-        pass
+        if strict:
+            raise
 
 
 _ACTIVE_BOOKING_STATES = ("pending_payment", "payment_failed", "confirmed")
@@ -176,7 +178,7 @@ def _booking_active_unique(coll):
         partialFilterExpression={"status": {"$in": list(_ACTIVE_BOOKING_STATES)}})
 
 
-def create_indexes():
+def create_indexes(strict=False):
     users = _db.users
     users.create_index("email", unique=True)
     users.create_index([("google_id", 1)], unique=True, sparse=True)
@@ -210,7 +212,7 @@ def create_indexes():
     payments = _db.payments
     _unique_string_index(payments, "provider_reference")
     _unique_string_index(payments, "idempotency_key")
-    _payment_booking_unique(payments)
+    _payment_booking_unique(payments, strict=strict)
 
     refunds = _db.refunds
     refunds.create_index([("payment_id", 1)])
@@ -222,14 +224,16 @@ def create_indexes():
         refunds.create_index(
             [("payment_id", 1)], unique=True,
             partialFilterExpression={"status": {"$in": ["processing", "processed"]}})
-    except Exception:  # noqa: BLE001 - best-effort partial unique index
-        pass
+    except Exception:  # noqa: BLE001 - uniqueness protects concurrent refunds
+        if strict:
+            raise
 
     webhook_events = _db.webhook_events
     try:
         webhook_events.create_index([("provider", 1), ("event_id", 1)], unique=True)
-    except Exception:  # noqa: BLE001 - best-effort unique index
-        pass
+    except Exception:  # noqa: BLE001 - event idempotency is a production invariant
+        if strict:
+            raise
     webhook_events.create_index([("provider", 1), ("first_received_at", -1)])
 
     ledger_entries = _db.ledger_entries
@@ -270,8 +274,9 @@ def create_indexes():
         payouts.create_index(
             [("user_id", 1), ("period.auto_key", 1)], unique=True,
             partialFilterExpression={"period.auto_key": {"$type": "string"}})
-    except Exception:  # noqa: BLE001 - best-effort unique index
-        pass
+    except Exception:  # noqa: BLE001 - payout-period uniqueness prevents double pay
+        if strict:
+            raise
     # The settlement worker's eligibility scan: oldest completed booking per
     # driver, filtered by completion state.
     try:
