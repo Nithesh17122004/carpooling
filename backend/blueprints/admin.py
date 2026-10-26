@@ -538,11 +538,9 @@ def pending_vehicle_reviews():
             "vehicle_model": vehicle.get("vehicle_model", ""),
             "vehicle_type": vehicle.get("vehicle_type", ""),
             "dl_number": vehicle.get("dl_number", ""),
-            "rc_number": vehicle.get("rc_number", ""),
             "insurance_number": vehicle.get("insurance_number", ""),
             "documents": {
                 "dl": f"/api/uploads/vehicle-doc/{vid}/dl" if (vehicle.get("dl_document") or {}).get("key") else None,
-                "rc": f"/api/uploads/vehicle-doc/{vid}/rc" if (vehicle.get("rc_document") or {}).get("key") else None,
                 "insurance": f"/api/uploads/vehicle-doc/{vid}/insurance" if (vehicle.get("insurance_document") or {}).get("key") else None,
             },
             "submitted_at": iso_utc(vehicle.get("kyc_submitted_at")),
