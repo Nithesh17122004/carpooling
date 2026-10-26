@@ -52,9 +52,6 @@ def _normalize(data, partial=False):
             raise APIError("Enter a valid driving licence number.", 422, code="validation_error",
                            details={"fields": ["dl_number"]})
         fields["dl_number"] = dl or None
-    if "rc_number" in data:
-        rc = as_str(data.get("rc_number"), "rc_number", max_len=30)
-        fields["rc_number"] = rc or None
     if "insurance_number" in data:
         ins = as_str(data.get("insurance_number"), "insurance_number", max_len=50)
         fields["insurance_number"] = ins or None
@@ -96,7 +93,6 @@ def clean_vehicle(v):
     v = dict(v)
     dl_doc = v.get("dl_document") or {}
     ins_doc = v.get("insurance_document") or {}
-    rc_doc = v.get("rc_document") or {}
     out = {
         "id": str(v["_id"]),
         "vehicle_type": v.get("vehicle_type"),
@@ -104,16 +100,12 @@ def clean_vehicle(v):
         "vehicle_model": v.get("vehicle_model") or "",
         "dl_number": v.get("dl_number"),
         "insurance_number": v.get("insurance_number"),
-        "rc_number": v.get("rc_number"),
         "seat_count": v.get("seat_count", 1),
         "color": v.get("color") or "",
         "notes": v.get("notes") or "",
         "home_location": v.get("home_location"),
         "dl_document_status": dl_doc.get("status", "not_uploaded"),
         "dl_document_size": dl_doc.get("size"),
-        "rc_document_status": rc_doc.get("status", "not_uploaded"),
-        "rc_document_size": rc_doc.get("size"),
-        "rc_document_url": f"/api/uploads/vehicle-doc/{v['_id']}/rc" if rc_doc.get("key") else "",
         "insurance_document_status": ins_doc.get("status", "not_uploaded"),
         "insurance_document_size": ins_doc.get("size"),
         "dl_document_url": f"/api/uploads/vehicle-doc/{v['_id']}/dl" if dl_doc.get("key") else "",
@@ -125,6 +117,8 @@ def clean_vehicle(v):
     # vehicle is refused for publishing, and the owner must never be able to set
     # it themselves.
     out["kyc"] = kyc_summary(v)
+    from ..rc import rc_summary
+    out["rc"] = rc_summary(v)
     out["verification_status"] = out["kyc"]["verification_status"]
     return out
 
