@@ -151,6 +151,8 @@ export const Api = {
   google: (b) => post('/api/auth/google', b),
   me: () => get('/api/auth/me'),
   providers: () => get('/api/auth/providers'),
+  sendVerificationEmail: () => post('/api/auth/verify-email/send', {}),
+  confirmEmail: (b) => post('/api/auth/verify-email/confirm', b),
   updateMe: (b) => patch('/api/auth/me', b),
   changePassword: (b) => post('/api/auth/password', b),
   logout: () => post('/api/auth/logout', null).catch(() => null),

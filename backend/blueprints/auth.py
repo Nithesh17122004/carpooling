@@ -7,6 +7,7 @@ from pymongo.errors import DuplicateKeyError
 from .. import db as dbmodule
 from ..db import get_db, utcnow
 from ..errors import APIError
+from ..email_provider import send_verification_email
 from ..google_oauth import get_google_provider
 from ..ratelimit import rate_limit
 from ..security import (
@@ -124,7 +125,7 @@ def _maybe_send_verification(user):
     ttl_hours = current_app.config["EMAIL_VERIFY_TTL_HOURS"]
     get_db().users.update_one({"_id": user["_id"]}, {"$set": {
         "verify_email_token": token,
-        "verify_email_token_expires": utcnow() + _ttl(ttl_hours),
+        "verify_email_token_expires": _ttl(ttl_hours),
     }})
     return token
 
@@ -154,6 +155,13 @@ def register():
     extra = {}
     if dev_token and current_app.config["ENV"] == "development":
         extra["dev_verify_token"] = dev_token
+    if dev_token:
+        try:
+            send_verification_email(user["email"], user.get("name", ""), dev_token)
+            extra["verification_email_sent"] = True
+        except Exception:
+            current_app.logger.exception("Verification email delivery failed.")
+            extra["verification_email_sent"] = False
     return _session_user(user, extra_token=extra), 201
 
 
@@ -339,8 +347,14 @@ def send_verification():
         "verify_email_token": token,
         "verify_email_token_expires": _ttl(ttl_hours),
     }})
-    # NOTE: email delivery is a separate component; the token is returned in
-    # the response ONLY for local development (no mail backend wired yet).
+    try:
+        send_verification_email(g.user["email"], g.user.get("name", ""), token)
+    except Exception as exc:
+        current_app.logger.exception("Verification email delivery failed.")
+        raise APIError(
+            "Could not send the verification email. Check provider configuration and try again.",
+            503, code="email_delivery_failed",
+        ) from exc
     return {"ok": True, "message": "Verification email sent.",
             "dev_token": token if current_app.config["ENV"] == "development" else None}
 

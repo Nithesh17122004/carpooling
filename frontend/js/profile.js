@@ -74,6 +74,16 @@ export async function renderProfile(root) {
 
       <div class="detail-stack">
         <div class="card card--pad">
+          <div class="section-title" style="margin-top:0">Email verification</div>
+          <p class="text-faint text-sm">Request a verification code by email, then enter it here to verify your account.</p>
+          <button type="button" class="btn btn-outline btn-block" id="sendVerification">Send verification email</button>
+          <form id="verifyEmailForm" class="mt-12">
+            <div class="field"><label for="verifyEmailToken">Verification code</label>
+              <input class="input" id="verifyEmailToken" name="token" autocomplete="one-time-code" required maxlength="64" placeholder="Paste the code from your email" /></div>
+            <button type="submit" class="btn btn-primary btn-block">Verify email</button>
+          </form>
+        </div>
+        <div class="card card--pad">
           <div class="section-title" style="margin-top:0">Change password</div>
           <form id="pwForm">
             <div class="flex flex-col gap-12">
@@ -94,6 +104,23 @@ export async function renderProfile(root) {
         </div>
       </div>
     </div>`;
+
+  /* Email verification */
+  root.querySelector('#sendVerification').addEventListener('click', async () => {
+    try {
+      await Api.sendVerificationEmail();
+      toast('Verification email requested. Check your inbox and spam folder.', 'success');
+    } catch (err) { toast(errMsg(err), 'error'); }
+  });
+  bindForm(root.querySelector('#verifyEmailForm'), async (form) => {
+    const token = new FormData(form).get('token');
+    try {
+      const res = await Api.confirmEmail({ token });
+      store.user = res.user;
+      toast('Email verified successfully.', 'success');
+      renderProfile(root);
+    } catch (err) { toast(errMsg(err), 'error'); }
+  });
 
   /* avatar upload */
   root.querySelector('#avatarInput').addEventListener('change', async (e) => {
