@@ -106,6 +106,12 @@ def test_google_email_not_accepted(client, db):
         assert r.get_json()["error"]["code"] == "missing_fields"
 
 
+def test_firebase_email_link_requires_server_configuration(client, db):
+    r = client.post("/api/auth/firebase", json={"id_token": "fake.firebase.id.token"})
+    assert r.status_code == 503
+    assert r.get_json()["error"]["code"] == "firebase_not_configured"
+
+
 def test_google_credential_without_config(client, db):
     """With GOOGLE_CLIENT_ID unset the server refuses creds cleanly."""
     r = client.post("/api/auth/google", json={"credential": "fake.jwt.value"})
