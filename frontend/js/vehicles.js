@@ -120,12 +120,13 @@ function wireDocs(grid, vehicles) {
   grid.querySelectorAll('[data-view-rc]').forEach((button) => {
     button.addEventListener('click', async () => {
       button.disabled = true;
+      const tab = window.open('about:blank', '_blank');
+      if (!tab) { toast('Your browser blocked the document tab. Allow pop-ups and try again.', 'error'); button.disabled = false; return; }
+      tab.opener = null;
       try {
         const blob = await Api.downloadVehicleDoc('/api/kyc/vehicles/' + button.dataset.viewRc + '/rc/document');
-        const tab = window.open(URL.createObjectURL(blob), '_blank');
-        if (tab) tab.opener = null;
-        else toast('Your browser blocked the document tab. Allow pop-ups and try again.', 'error');
-      } catch (err) { toast(errMsg(err), 'error'); }
+        tab.location.href = URL.createObjectURL(blob);
+      } catch (err) { tab.close(); toast(errMsg(err), 'error'); }
       finally { button.disabled = false; }
     });
   });
@@ -134,13 +135,13 @@ function wireDocs(grid, vehicles) {
       const file = input.files && input.files[0];
       if (!file) return;
       const number = [...grid.querySelectorAll('[data-rc-number]')].find((el) => el.dataset.rcNumber === input.dataset.rcDoc)?.value?.trim();
-      if (!number) { toast('Enter the RC number before uploading the document.', 'error'); return; }
+      if (!number) { toast('Enter the RC number before uploading the document.', 'error'); input.value = ''; return; }
       input.disabled = true;
       try {
         await Api.submitRc(input.dataset.rcDoc, number, file);
         toast('RC submitted for manual review.', 'success');
         await renderVehicles(document.getElementById('view'));
-      } catch (err) { toast(errMsg(err), 'error'); input.disabled = false; }
+      } catch (err) { toast(errMsg(err), 'error'); input.disabled = false; input.value = ''; }
     });
   });
   grid.querySelectorAll('[data-view-doc]').forEach((button) => {
