@@ -212,6 +212,7 @@ function vehicleFormModal(v, onSaved) {
               <input class="input" name="dl_number" value="${v ? h(v.dl_number || '') : ''}" placeholder="KA05 1993 0123456" /></div>
             <div class="field"><label>Insurance policy no.</label>
               <input class="input" name="insurance_number" value="${v ? h(v.insurance_number || '') : ''}" placeholder="Insurance policy number" />
+            </div>
           </div>
           <div class="field"><label>Colour <span class="text-faint">(optional)</span></label>
             <input class="input" name="insurance_number" value="${v ? h(v.insurance_number || '') : ''}" placeholder="Insurance policy number" />
