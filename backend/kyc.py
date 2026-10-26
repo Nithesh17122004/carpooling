@@ -37,8 +37,8 @@ KYC_REJECTED = "rejected"
 KYC_STATES = {KYC_UNVERIFIED, KYC_SUBMITTED, KYC_VERIFIED, KYC_REJECTED}
 
 # Only these two document slots participate in verification.
-REQUIRED_DOCUMENTS = ("dl_document", "insurance_document")
-REQUIRED_FIELDS = ("dl_number", "insurance_number")
+REQUIRED_DOCUMENTS = ("dl_document", "rc_document", "insurance_document")
+REQUIRED_FIELDS = ("dl_number", "rc_number", "insurance_number")
 
 _KYC_TRANSITIONS = {
     KYC_UNVERIFIED: {KYC_SUBMITTED},
