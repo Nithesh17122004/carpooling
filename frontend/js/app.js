@@ -3,6 +3,7 @@
 import { store, Api, restoreSession } from './api.js';
 import { icon, assetUrl, h, toast, closeOpenModal, errMsg } from './ui.js';
 import { renderAuth } from './auth.js';
+import { completeFirebaseEmailLink } from './firebase-email-link.js';
 import { renderDiscover } from './discover.js';
 import { renderRide } from './ride.js';
 import { renderPublish } from './publish.js';
@@ -206,6 +207,7 @@ async function bootSplash() {
 async function boot() {
   buildNav();
   attachGlobalEvents();
+  await completeFirebaseEmailLink();
   await bootSplash();
   route();
 }
