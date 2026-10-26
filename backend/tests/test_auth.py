@@ -114,6 +114,7 @@ def test_firebase_config_disables_password_auth_routes(client, monkeypatch):
         "FIREBASE_PROJECT_ID": "ridemate-test",
         "FIREBASE_APP_ID": "test-app-id",
         "FIREBASE_SERVICE_ACCOUNT_JSON": "{\"project_id\":\"ridemate-test\"}",
+        "FIREBASE_AUTH_ENFORCE": True,
     }.items():
         monkeypatch.setitem(cfg, key, value)
     register = client.post("/api/auth/register", json={
