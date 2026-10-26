@@ -60,7 +60,14 @@ def test_sos_flags_ride_and_audits(client, db, driver, rider, vehicle):
         "departure_date": "2099-12-31", "departure_time": "09:00",
         "timezone": "Asia/Kolkata", "seats_total": 2, "fare_per_seat": 100}).get_json()["ride"]
 
-    r = client.post("/api/safety/sos", headers=rider["auth"], json={
+    # An unrelated authenticated user must not be able to flag someone else's ride.
+    denied = client.post("/api/safety/sos", headers=rider["auth"], json={
+        "ride_id": ride["id"], "note": "unauthorized"})
+    assert denied.status_code == 403, denied.get_json()
+    assert db.rides.find_one({"_id": ObjectId(ride["id"])}).get("sos_active") is not True
+
+    # The ride owner is allowed to raise an SOS for their ride.
+    r = client.post("/api/safety/sos", headers=driver["auth"], json={
         "ride_id": ride["id"], "note": "Need help"})
     assert r.status_code == 200, r.get_json()
     flagged = db.rides.find_one({"_id": ObjectId(ride["id"])})

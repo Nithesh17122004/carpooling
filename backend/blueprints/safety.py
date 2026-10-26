@@ -105,6 +105,22 @@ def sos():
         ride = db.rides.find_one({"_id": ride_id})
         if not ride:
             raise APIError("Ride not found.", 404, code="not_found")
+        # A ride ID is not authorization. Only its driver or a passenger
+        # with a confirmed booking may flag that ride as an SOS.
+        is_driver = ride.get("owner_id") == g.user["_id"]
+        is_confirmed_passenger = db.bookings.find_one({
+            "ride_id": ride_id,
+            "rider_id": g.user["_id"],
+            "status": "confirmed",
+        }) is not None
+        if not (is_driver or is_confirmed_passenger):
+            raise APIError(
+                "Only the driver or a confirmed passenger on this ride can "
+                "raise a ride SOS.",
+                403,
+                code="forbidden",
+            )
+
         db.rides.update_one({"_id": ride_id},
                             {"$set": {"sos_active": True, "sos_at": utcnow()}})
         ride_data = {"id": str(ride_id), "owner_id": str(ride["owner_id"])}
