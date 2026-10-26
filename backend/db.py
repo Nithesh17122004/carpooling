@@ -215,14 +215,17 @@ def create_indexes(strict=False):
     _payment_booking_unique(payments, strict=strict)
 
     refunds = _db.refunds
-    refunds.create_index([("payment_id", 1)])
+    # A normal lookup index and a partial unique index cannot share the same
+    # generated name. Use distinct stable names so legacy databases can migrate
+    # without deleting refund records or weakening the uniqueness invariant.
+    refunds.create_index([("payment_id", 1)], name="payment_id_lookup")
     _unique_string_index(refunds, "provider_reference")
     _unique_string_index(refunds, "idempotency_key")
     try:
         # At most one live/processed refund per payment -> concurrent refund
         # claims are resolved atomically by the unique index (E11000).
         refunds.create_index(
-            [("payment_id", 1)], unique=True,
+            [("payment_id", 1)], name="uniq_active_refund_per_payment", unique=True,
             partialFilterExpression={"status": {"$in": ["processing", "processed"]}})
     except Exception:  # noqa: BLE001 - uniqueness protects concurrent refunds
         if strict:
