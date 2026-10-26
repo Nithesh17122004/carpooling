@@ -1,7 +1,7 @@
 # RideMate production readiness checklist
 
 **Current target:** public marketplace hosted on Render.
-**Current decision blockers:** no Razorpay account yet; email, payout model, and KYC method are undecided.
+**Current decision blockers:** Razorpay test key is reported as configured but sandbox evidence is not yet recorded; Resend is selected but sender-domain/configuration/delivery are not yet verified; payout model and KYC method remain undecided.
 **Release status: NOT APPROVED FOR PUBLIC PRODUCTION.**
 
 This checklist tracks evidence, not intentions. A box is complete only when the evidence exists for the target environment. CI passing is not equivalent to live payments, verified identities, or a security-reviewed production deployment.
@@ -12,6 +12,7 @@ This checklist tracks evidence, not intentions. A box is complete only when the 
 - [x] Production Docker image builds successfully in the production-verification workflow.
 - [x] Chromium browser smoke check passes against the running SPA and API (shell, core assets, API readiness, uncaught JS errors).
 - [ ] Frontend syntax/dependency checks pass on the latest PR #3 head; confirm the current CI run before merge.
+- [ ] Resend integration and email-verification tests pass in CI; a real delivered message is verified in staging.
 - [ ] Release artifact is built and scanned for secrets before publication.
 
 Evidence links:
@@ -21,17 +22,17 @@ Evidence links:
 ## Owner actions — blocking a public launch
 
 ### 1. Create and activate the payment account
-- [ ] Create a Razorpay account for the legal entity/operator running RideMate.
-- [ ] Confirm Razorpay approves the intended marketplace/business model and payment flow; do not assume a standard account permits every marketplace or split-settlement design.
-- [ ] Generate **test-mode** keys and configure the webhook endpoint `/api/payments/webhook` and a webhook signing secret in Render's secret environment settings.
+- [ ] Confirm the Razorpay account is registered to the legal entity/operator running RideMate and that its marketplace/business model and payment flow are approved; do not assume a standard account permits every marketplace or split-settlement design.
+- [x] Owner reports that Razorpay test credentials are already implemented/configured; this is not yet independently verified by a successful sandbox transaction.
+- [ ] Configure test-mode keys and the webhook signing secret in Render's secret environment settings, and configure webhook endpoint `/api/payments/webhook` in the Razorpay dashboard.
 - [ ] Run real sandbox checkout, valid and invalid webhook signatures, duplicate webhook replay/idempotency, failed payment, cancellation, refund and reconciliation tests.
 - [ ] Obtain any required live-mode activation before accepting customer money. Never put keys in Git or this chat.
 
 ### 2. Choose and configure email delivery
-- [ ] Choose a provider (recommended short-list: Amazon SES, Resend, SendGrid or Postmark).
-- [ ] Verify a sender domain/address and configure the provider credentials securely in Render.
-- [ ] Implement/configure actual registration and resend-verification email delivery; current code generates a token but has no mail transport wired in.
-- [ ] Make email verification mandatory for a public launch only after delivery is working; test delivered links, expiration, replay, invalid tokens and resend rate limits.
+- [x] Provider selected: **Resend**. Backend adapter, registration/resend delivery calls, and profile verification-code UI have been added on PR #3.
+- [ ] Revoke the Resend key pasted into chat and create a replacement. Configure `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and a verified `EMAIL_FROM` sender in Render secrets; never commit the key.
+- [ ] Verify sender domain/address in Resend, then test registration email delivery and resend/confirm/expiry behavior in staging. Automated mocked-provider tests do not prove delivery to a real inbox.
+- [ ] Set `REQUIRE_EMAIL_VERIFICATION=true` only after the above succeeds; production startup now rejects mandatory verification if Resend configuration is missing.
 
 ### 3. Decide payout operations
 - [ ] Choose **manual payouts** for a tightly controlled initial launch, with dual approval, bank-reference recording, reconciliation and an owner responsible for each payout; OR choose RazorpayX and complete provider onboarding plus signed payout webhook tests.
@@ -63,8 +64,8 @@ Evidence links:
 
 - Hosting: **Render**
 - Launch: **Public marketplace**
-- Razorpay account: **None yet**
-- Email provider: **Undecided**
+- Razorpay: **Test key reported as already configured; live approval and sandbox evidence pending**
+- Email provider: **Resend selected; sender domain and replacement API key must be configured securely**
 - Payout model: **Undecided**
 - KYC approach: **Undecided**
 
