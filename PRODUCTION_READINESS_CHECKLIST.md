@@ -1,7 +1,7 @@
 # RideMate production readiness checklist
 
 **Current target:** public marketplace hosted on Render.
-**Current decision blockers:** Razorpay test key is reported as configured but sandbox evidence is not yet recorded; Resend is selected but sender-domain/configuration/delivery are not yet verified; payout model and KYC method remain undecided.
+**Current decision blockers:** Razorpay sandbox evidence is not yet recorded; Firebase email-link auth needs a Firebase project and server credentials; manual DL/RC/insurance review is selected but must be exercised end to end; payout operations need owner sign-off.
 **Release status: NOT APPROVED FOR PUBLIC PRODUCTION.**
 
 This checklist tracks evidence, not intentions. A box is complete only when the evidence exists for the target environment. CI passing is not equivalent to live payments, verified identities, or a security-reviewed production deployment.
@@ -12,7 +12,7 @@ This checklist tracks evidence, not intentions. A box is complete only when the 
 - [x] Production Docker image builds successfully in the production-verification workflow.
 - [x] Chromium browser smoke check passes against the running SPA and API (shell, core assets, API readiness, uncaught JS errors).
 - [ ] Frontend syntax/dependency checks pass on the latest PR #3 head; confirm the current CI run before merge.
-- [ ] Resend integration and email-verification tests pass in CI; a real delivered message is verified in staging.
+- [ ] Firebase email-link flow passes in a configured Firebase project; Firebase Admin verifies ID tokens; signup/login/session linking are tested in staging.
 - [ ] Release artifact is built and scanned for secrets before publication.
 
 Evidence links:
@@ -28,20 +28,24 @@ Evidence links:
 - [ ] Run real sandbox checkout, valid and invalid webhook signatures, duplicate webhook replay/idempotency, failed payment, cancellation, refund and reconciliation tests.
 - [ ] Obtain any required live-mode activation before accepting customer money. Never put keys in Git or this chat.
 
-### 2. Choose and configure email delivery
-- [x] Provider selected: **Resend**. Backend adapter, registration/resend delivery calls, and profile verification-code UI have been added on PR #3.
-- [ ] Revoke the Resend key pasted into chat and create a replacement. Configure `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and a verified `EMAIL_FROM` sender in Render secrets; never commit the key.
-- [ ] Verify sender domain/address in Resend, then test registration email delivery and resend/confirm/expiry behavior in staging. Automated mocked-provider tests do not prove delivery to a real inbox.
-- [ ] Set `REQUIRE_EMAIL_VERIFICATION=true` only after the above succeeds; production startup now rejects mandatory verification if Resend configuration is missing.
+### 2. Configure managed email-link authentication (Firebase)
+- [ ] Create a Firebase project and enable **Authentication → Email/Password → Email link (passwordless sign-in)**.
+- [ ] Add the Render origin `https://carpooling-jm9s.onrender.com` to Firebase Authentication's authorized domains; ensure the action/continue URL is allowed.
+- [ ] Set `FIREBASE_WEB_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID`, and `FIREBASE_APP_ID` in Render. These web config values are public identifiers, not service-account secrets.
+- [ ] Create a least-privilege service account for Firebase Admin token verification and set its full JSON as the Render secret `FIREBASE_SERVICE_ACCOUNT_JSON`. Never commit or paste the JSON into chat.
+- [ ] Test send-link, expired/invalid links, verified-email enforcement, existing-account linking, session creation, logout, and link completion on desktop/mobile.
+- [ ] Keep existing password login available during migration. Do not enable a mandatory provider-only rollout until Firebase sign-in and account recovery are tested; revoke the Resend key previously exposed in chat if it has not already been rotated.
 
 ### 3. Decide payout operations
 - [ ] Choose **manual payouts** for a tightly controlled initial launch, with dual approval, bank-reference recording, reconciliation and an owner responsible for each payout; OR choose RazorpayX and complete provider onboarding plus signed payout webhook tests.
 - [ ] Do not advertise automated payouts unless the provider integration and its failure/retry/reconciliation paths are tested.
 
-### 4. Decide identity verification and document handling
-- [ ] Decide whether to run a manual-review operation or integrate a compliant third-party KYC provider.
-- [ ] If manual review is chosen, appoint trained reviewers, define review SLAs/rejection appeals and limit who can access identity documents.
-- [ ] If a vendor is chosen, complete vendor/legal onboarding and test the vendor's verification result and failure states.
+### 4. Manual DL / RC / insurance review and document handling
+- [x] Selected approach: human review first; no automatic government-record verification claim.
+- [x] Vehicle submission requires DL number/document, RC number/document, and insurance number/document; document replacement or identity-detail changes reopen review.
+- [x] Admin-only pending-review queue and approve/reject endpoint are available. Reviewers can access private documents only while a packet is submitted.
+- [ ] Appoint trained reviewers; define review SLA, rejection reasons/appeals, and a second-person escalation for suspicious documents.
+- [ ] Exercise the pending queue with a test vehicle, compare name/number/validity/vehicle class and plate details, approve one packet, reject another, and verify an unreviewed driver cannot publish.
 - [ ] Set a strong `DOCUMENT_ENCRYPTION_KEY` in Render secrets; verify document access controls and retention/deletion policy before real identity documents are uploaded.
 
 ### 5. Set up Render staging and production
@@ -65,9 +69,9 @@ Evidence links:
 - Hosting: **Render**
 - Launch: **Public marketplace**
 - Razorpay: **Test key reported as already configured; live approval and sandbox evidence pending**
-- Email provider: **Resend selected; sender domain and replacement API key must be configured securely**
-- Payout model: **Undecided**
-- KYC approach: **Undecided**
+- Email provider: **Firebase email-link auth selected; Firebase project and server credentials must be configured**
+- Payout model: **Manual payouts preferred for a controlled pilot; dual approval and reconciliation must be operationally confirmed**
+- KYC approach: **Manual DL/RC/insurance review selected; provider automation deferred**
 
 ## Status rule
 
