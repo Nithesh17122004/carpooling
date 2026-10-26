@@ -118,7 +118,9 @@ function wireDocs(grid, vehicles) {
       button.disabled = true;
       try {
         const blob = await Api.downloadVehicleDoc(button.dataset.url);
-        window.open(URL.createObjectURL(blob), '_blank', 'noopener');
+        const tab = window.open(URL.createObjectURL(blob), '_blank');
+        if (tab) tab.opener = null;
+        else toast('Your browser blocked the document tab. Allow pop-ups and try again.', 'error');
       } catch (err) {
         toast(errMsg(err), 'error');
       } finally {
