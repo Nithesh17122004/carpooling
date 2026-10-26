@@ -2,6 +2,7 @@
 
 import { Api, store } from './api.js';
 import { icon, bindForm, toast, errMsg, fieldError } from './ui.js';
+import { isFirebaseEnabled, sendFirebaseEmailLink } from './firebase-email-link.js';
 
 function brand(light = true) {
   return `<a class="brand" href="#/login" style="${light ? 'color:#fff' : ''}">
@@ -91,6 +92,7 @@ function loginCard() {
     </form>
     <div class="auth__or">OR</div>
     <div id="googleSlot"></div>
+    <div id="firebaseSlot" style="margin-top:8px"></div>
     <div class="demo-note">${icon('info', 14)}&nbsp; Demo accounts open instantly — password is <b>Password123</b>.</div>
     <p class="auth__foot">New to RideMate? <a href="#/signup" style="color:var(--brand);font-weight:700">Create an account</a></p>`;
 
@@ -147,9 +149,53 @@ function signupCard() {
     </form>
     <div class="auth__or">OR</div>
     <div id="googleSlot"></div>
+    <div id="firebaseSlot" style="margin-top:8px"></div>
     <p class="auth__foot">Already a member? <a href="#/login" style="color:var(--brand);font-weight:700">Log in</a></p>`;
 
   return html;
+}
+
+async function wireFirebase(root, isLogin) {
+  const slot = root.querySelector('#firebaseSlot');
+  if (!slot) return;
+  if (!(await isFirebaseEnabled())) { slot.remove(); return; }
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'btn btn-outline btn-block';
+  button.textContent = 'Continue with secure email link';
+  button.addEventListener('click', async () => {
+    const emailInput = root.querySelector(isLogin ? '#email' : '#uemail');
+    const email = emailInput?.value?.trim() || '';
+    if (!email) {
+      toast('Enter your email address first.', 'error');
+      emailInput?.focus();
+      return;
+    }
+    const profile = {};
+    if (!isLogin) {
+      profile.name = root.querySelector('#name')?.value?.trim() || '';
+      if (!profile.name) {
+        toast('Enter your full name before requesting a sign-in link.', 'error');
+        root.querySelector('#name')?.focus();
+        return;
+      }
+      profile.phone = root.querySelector('#phone')?.value || '';
+      profile.age = root.querySelector('#age')?.value || null;
+      profile.gender = root.querySelector('#gender')?.value || '';
+    }
+    button.disabled = true;
+    button.textContent = 'Sending secure link…';
+    try {
+      await sendFirebaseEmailLink(email, profile);
+      toast('Check your email for a secure RideMate sign-in link.', 'success');
+    } catch (err) {
+      toast(errMsg(err), 'error');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Continue with secure email link';
+    }
+  });
+  slot.appendChild(button);
 }
 
 function wirePwToggles(root) {
@@ -172,6 +218,7 @@ export function renderAuth(root, path) {
   root.innerHTML = authPanels(path);
   const isLogin = path === '/login';
   wireGoogle(root, isLogin);
+  wireFirebase(root, isLogin);
 
   const handle = async (form) => {
     const values = new FormData(form);
