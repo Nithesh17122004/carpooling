@@ -60,8 +60,9 @@ export async function renderAdminKyc(root) {
             const blob = await Api.downloadVehicleDoc(button.dataset.url);
             const objectUrl = URL.createObjectURL(blob);
             openedUrls.add(objectUrl);
-            const tab = window.open(objectUrl, '_blank', 'noopener');
-            if (!tab) toast('Your browser blocked the document tab. Allow pop-ups and try again.', 'error');
+            const tab = window.open(objectUrl, '_blank');
+            if (tab) tab.opener = null;
+            else toast('Your browser blocked the document tab. Allow pop-ups and try again.', 'error');
           } catch (err) {
             toast(errMsg(err), 'error');
           } finally {
