@@ -152,6 +152,9 @@ class Config:
     FIREBASE_PROJECT_ID = _env("FIREBASE_PROJECT_ID", "")
     FIREBASE_APP_ID = _env("FIREBASE_APP_ID", "")
     FIREBASE_SERVICE_ACCOUNT_JSON = _env("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+    # Keep password auth available during staged rollout; set true only after
+    # Firebase email-link sign-in and account recovery are verified in staging.
+    FIREBASE_AUTH_ENFORCE = _env_bool("FIREBASE_AUTH_ENFORCE", False)
 
     # Redis (rate limiting + realtime pub/sub + live locations)
     REDIS_URL = _env("REDIS_URL", "")
