@@ -53,10 +53,11 @@ def _complete_kyc(client, db, driver, seq, number="KA01AB1234"):
     created = client.post("/api/vehicles", headers=driver["auth"], json={
         "vehicle_type": "4-wheeler", "vehicle_number": f"KA01ZZ{seq:04d}",
         "vehicle_model": "KYC Car", "seat_count": 4,
-        "dl_number": "KA0520120012345", "insurance_number": "POL-2026-7788"})
+        "dl_number": "KA0520120012345", "rc_number": "KA01ZZ0001", "insurance_number": "POL-2026-7788"})
     assert created.status_code == 201, created.get_json()
     vid = created.get_json()["vehicle"]["id"]
     _upload(client, driver["auth"], vid, "dl")
+    _upload(client, driver["auth"], vid, "rc")
     _upload(client, driver["auth"], vid, "insurance")
     satisfy_other_publish_gates(db, driver["user"]["_id"], vid, vehicle_kyc=False)
     return vid
@@ -139,16 +140,16 @@ def test_submission_requires_both_documents_and_details(client, db, driver):
     assert early.status_code == 422
     assert early.get_json()["error"]["code"] == "kyc_documents_missing"
     assert set(early.get_json()["error"]["details"]["missing"]) == {
-        "dl_number", "insurance_number", "dl_document", "insurance_document"}
+        "dl_number", "rc_number", "insurance_number", "dl_document", "rc_document", "insurance_document"}
 
     # details alone are not enough
     client.patch(f"/api/vehicles/{vid}", headers=driver["auth"], json={
-        "dl_number": "KA0520120099995", "insurance_number": "POL-2026-1234"})
+        "dl_number": "KA0520120099995", "rc_number": "KA04DD4444", "insurance_number": "POL-2026-1234"})
     still = client.post(f"/api/vehicles/{vid}/submit-verification",
                         headers=driver["auth"], json={})
     assert still.status_code == 422
     assert set(still.get_json()["error"]["details"]["missing"]) == {
-        "dl_document", "insurance_document"}
+        "dl_document", "rc_document", "insurance_document"}
 
 
 def test_a_complete_packet_can_be_submitted(client, db, driver):
