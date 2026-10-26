@@ -215,10 +215,26 @@ def create_indexes(strict=False):
     _payment_booking_unique(payments, strict=strict)
 
     refunds = _db.refunds
-    # A normal lookup index and a partial unique index cannot share the same
-    # generated name. Use distinct stable names so legacy databases can migrate
-    # without deleting refund records or weakening the uniqueness invariant.
-    refunds.create_index([("payment_id", 1)], name="payment_id_lookup")
+    # Legacy databases may already have the conventional payment_id_1 lookup
+    # index. Avoid trying to create an equivalent non-unique index under a new
+    # name, which MongoDB rejects as IndexOptionsConflict. A basic index and a
+    # unique partial index may share this key pattern; give the invariant its
+    # own stable name so existing databases can migrate without data deletion.
+    try:
+        refund_indexes = refunds.index_information()
+    except Exception:  # noqa: BLE001 - collection may not exist yet
+        refund_indexes = {}
+    has_payment_id_index = False
+    for index in refund_indexes.values():
+        key_spec = index.get("key") or []
+        if isinstance(key_spec, dict):
+            key_spec = list(key_spec.items())
+        if list(key_spec) == [("payment_id", 1)]:
+            has_payment_id_index = True
+            break
+    if not has_payment_id_index:
+        refunds.create_index([("payment_id", 1)], name="payment_id_lookup")
+
     _unique_string_index(refunds, "provider_reference")
     _unique_string_index(refunds, "idempotency_key")
     try:
