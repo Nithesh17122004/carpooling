@@ -32,6 +32,18 @@ def test_valid_doc_upload_and_authorized_download(client, db, driver, rider, veh
     assert dl.data.startswith(b"\x89PNG")
 
 
+def test_rc_document_upload_is_private_and_supported(client, db, driver, rider, vehicle):
+    r = client.post("/api/uploads/vehicle-doc", headers=driver["auth"],
+                    data={"vehicle_id": vehicle["id"], "doc": "rc",
+                          "file": (io.BytesIO(_png()), "rc.png")},
+                    content_type="multipart/form-data")
+    assert r.status_code == 200, r.get_json()
+    assert r.get_json()["kind"] == "rc"
+    assert db.vehicles.find_one({"_id": __import__("bson").ObjectId(vehicle["id"])})["rc_document"]["key"]
+    assert client.get(f"/api/uploads/vehicle-doc/{vehicle['id']}/rc", headers=driver["auth"]).status_code == 200
+    assert client.get(f"/api/uploads/vehicle-doc/{vehicle['id']}/rc", headers=rider["auth"]).status_code == 404
+
+
 def test_invalid_text_rejected(client, db, driver, rider, vehicle):
     r = _upload(client, driver["auth"], vehicle["id"], name="evil.txt", data=b"<script>x</script>")
     assert r.status_code == 422
