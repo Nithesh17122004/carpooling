@@ -137,6 +137,9 @@ def _maybe_send_verification(user):
 @bp.post("/register")
 @rate_limit("auth")
 def register():
+    if firebase_is_configured(current_app.config):
+        raise APIError("Use the secure Firebase email-link sign-in to create your RideMate account.",
+                       409, code="firebase_email_link_required")
     data = body()
     require_fields(data, "name", "email", "password")
     name = as_str(data.get("name"), "name", max_len=80, required=True)
@@ -172,6 +175,9 @@ def register():
 @bp.post("/login")
 @rate_limit("auth")
 def login():
+    if firebase_is_configured(current_app.config):
+        raise APIError("Use the secure Firebase email-link sign-in to access your RideMate account.",
+                       409, code="firebase_email_link_required")
     data = body()
     require_fields(data, "email", "password")
     email = valid_email(data.get("email"), required=True)
