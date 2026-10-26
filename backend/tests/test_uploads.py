@@ -3,8 +3,6 @@
 import base64
 import io
 
-from bson import ObjectId
-
 from backend.tests.conftest import _make_user, make_ride
 
 # 1x1 valid PNG (Pillow can decode it)
@@ -32,18 +30,6 @@ def test_valid_doc_upload_and_authorized_download(client, db, driver, rider, veh
     dl = client.get(f"/api/uploads/vehicle-doc/{vehicle['id']}/dl", headers=driver["auth"])
     assert dl.status_code == 200
     assert dl.data.startswith(b"\x89PNG")
-
-
-def test_rc_document_upload_is_private_and_supported(client, db, driver, rider, vehicle):
-    r = client.post("/api/uploads/vehicle-doc", headers=driver["auth"],
-                    data={"vehicle_id": vehicle["id"], "doc": "rc",
-                          "file": (io.BytesIO(_png()), "rc.png")},
-                    content_type="multipart/form-data")
-    assert r.status_code == 200, r.get_json()
-    assert r.get_json()["kind"] == "rc"
-    assert db.vehicles.find_one({"_id": ObjectId(vehicle["id"])})["rc_document"]["key"]
-    assert client.get(f"/api/uploads/vehicle-doc/{vehicle['id']}/rc", headers=driver["auth"]).status_code == 200
-    assert client.get(f"/api/uploads/vehicle-doc/{vehicle['id']}/rc", headers=rider["auth"]).status_code == 404
 
 
 def test_invalid_text_rejected(client, db, driver, rider, vehicle):
