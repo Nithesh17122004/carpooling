@@ -22,12 +22,13 @@ export async function renderAdminKyc(root) {
     scope.querySelectorAll('[data-doc-url]').forEach((button) => {
       button.addEventListener('click', async () => {
         button.disabled = true;
+        const tab = window.open('about:blank', '_blank');
+        if (!tab) { toast('Your browser blocked the document tab. Allow pop-ups and try again.', 'error'); return; }
+        tab.opener = null;
         try {
           const blob = await Api.downloadVehicleDoc(button.dataset.docUrl);
-          const tab = window.open(URL.createObjectURL(blob), '_blank');
-          if (tab) tab.opener = null;
-          else toast('Your browser blocked the document tab. Allow pop-ups and try again.', 'error');
-        } catch (err) { toast(errMsg(err), 'error'); }
+          tab.location.href = URL.createObjectURL(blob);
+        } catch (err) { tab.close(); toast(errMsg(err), 'error'); }
         finally { button.disabled = false; }
       });
     });
