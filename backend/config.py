@@ -231,6 +231,10 @@ class Config:
     LOCATION_HISTORY_TTL_HOURS = _env_int("LOCATION_HISTORY_TTL_HOURS", 7 * 24)
     PAYMENT_TTL_MINUTES = _env_int("PAYMENT_TTL_MINUTES", 15)
 
+    # Transactional email (provider credentials are server-side only).
+    EMAIL_PROVIDER = _env("EMAIL_PROVIDER", "disabled").lower()  # disabled | resend
+    RESEND_API_KEY = _env("RESEND_API_KEY", "")
+    EMAIL_FROM = _env("EMAIL_FROM", "")
     # Verification
     REQUIRE_EMAIL_VERIFICATION = _env_bool("REQUIRE_EMAIL_VERIFICATION", False)
     EMAIL_VERIFY_TTL_HOURS = _env_int("EMAIL_VERIFY_TTL_HOURS", 24)
@@ -294,7 +298,15 @@ def validate_runtime(app_config) -> None:
             or any(p in str(value).lower() for p in placeholders)
         )
 
-    if _placeholder(app_config.get("JWT_SECRET")):
+    if app_config.get("REQUIRE_EMAIL_VERIFICATION"):
+        if app_config.get("EMAIL_PROVIDER") != "resend":
+            problems.append("EMAIL_PROVIDER=resend is required when email verification is mandatory")
+        if _placeholder(app_config.get("RESEND_API_KEY")):
+            problems.append("RESEND_API_KEY is required when email verification is mandatory")
+        if _placeholder(app_config.get("EMAIL_FROM")):
+            problems.append("EMAIL_FROM is required when email verification is mandatory")
+
+    if _placeholder(app_config.get("JWT_SECRET"))
         problems.append("JWT_SECRET")
     if _placeholder(app_config.get("SECRET_KEY")) and _placeholder(app_config.get("APP_SECRET")):
         problems.append("SECRET_KEY/APP_SECRET")
