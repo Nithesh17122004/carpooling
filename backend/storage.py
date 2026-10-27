@@ -9,6 +9,7 @@ Document files are stored under random keys and never returned to non-owners.
 """
 
 import os
+import re
 from pathlib import Path
 
 from .config import UPLOAD_DIR
@@ -144,3 +145,11 @@ def public_avatar_url(key):
 def is_public_avatar(filename):
     """Only files under avatars/ are servable by the public static route."""
     return isinstance(filename, str) and filename.startswith("avatars/") and ".." not in filename
+
+def safe_filename(filename):
+    """Return a harmless basename for an HTTP Content-Disposition header."""
+    name = os.path.basename(str(filename or "document").replace("\\\\", "/"))
+    # Keep common filename characters only; never allow quotes, controls or
+    # path separators to escape the quoted header value.
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name).strip("._")
+    return (name or "document")[:120]
