@@ -147,7 +147,12 @@ export async function renderProfile(root) {
         store.user = res.user;
         toast('Phone number verified successfully.', 'success');
         renderProfile(root);
-      } catch (err) { toast(errMsg(err), 'error'); }
+      } catch (err) {
+        // A wrong/expired code should not lock the user out of retrying.
+        phoneSend.disabled = false;
+        phoneSend.textContent = 'Resend SMS code';
+        toast(errMsg(err), 'error');
+      }
     });
   }
 
