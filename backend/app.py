@@ -65,6 +65,7 @@ _SECURITY_HEADERS = {
         "'self' "
         "'unsafe-inline' "
         "https://unpkg.com "
+        "https://www.gstatic.com "
         "https://accounts.google.com "
         # Razorpay Checkout.js is loaded from the provider, not bundled.
         "https://checkout.razorpay.com; "
@@ -74,6 +75,7 @@ _SECURITY_HEADERS = {
         "'self' "
         "'unsafe-inline' "
         "https://unpkg.com "
+        "https://www.gstatic.com "
         "https://accounts.google.com "
         "https://checkout.razorpay.com; "
 
@@ -103,6 +105,10 @@ _SECURITY_HEADERS = {
         "https://accounts.google.com "
         "https://www.googleapis.com "
         "https://*.googleapis.com "
+        "https://identitytoolkit.googleapis.com "
+        "https://securetoken.googleapis.com "
+        "https://www.google.com "
+        "https://www.recaptcha.net "
         # The checkout iframe and the order/verify calls leave the origin here.
         "https://api.razorpay.com "
         "https://checkout.razorpay.com; "
@@ -111,6 +117,9 @@ _SECURITY_HEADERS = {
         "frame-src "
         "'self' "
         "https://accounts.google.com "
+        "https://www.google.com "
+        "https://recaptcha.google.com "
+        "https://www.recaptcha.net "
         "https://api.razorpay.com "
         "https://checkout.razorpay.com; "
 

@@ -150,6 +150,7 @@ export const Api = {
   login: (b) => post('/api/auth/login', b),
   google: (b) => post('/api/auth/google', b),
   firebaseSession: (b) => post('/api/auth/firebase', b),
+  verifyPhone: (b) => post('/api/auth/phone/verify', b),
   me: () => get('/api/auth/me'),
   providers: () => get('/api/auth/providers'),
   sendVerificationEmail: () => post('/api/auth/verify-email/send', {}),

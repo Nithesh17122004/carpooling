@@ -8,16 +8,18 @@ This checklist tracks evidence, not intentions. A box is complete only when the 
 
 ## Verified in GitHub Actions
 
-- [ ] Backend tests pass in GitHub Actions against MongoDB 7. The baseline CI run for PR #2 passed, but the current PR #3 run is still pending.
+- [ ] Backend tests pass in GitHub Actions against MongoDB 7, including the phone-verification tests added in PR #5; verify the current run before merge.
 - [x] Production Docker image builds successfully in the production-verification workflow.
 - [x] Chromium browser smoke check passes against the running SPA and API (shell, core assets, API readiness, uncaught JS errors).
-- [ ] Frontend syntax/dependency checks pass on the latest PR #3 head; confirm the current CI run before merge.
+- [ ] Frontend syntax/dependency checks pass on the latest pull-request head; confirm the current CI run before merge.
 - [ ] Firebase email-link flow passes in a configured Firebase project; Firebase Admin verifies ID tokens; signup/login/session linking are tested in staging.
-- [ ] Release artifact is built and scanned for secrets before publication.
+- [ ] Release artifact is built and scanned for secrets before publication; the repository-history Gitleaks workflow has been added, but its latest run and release-artifact scanning still need evidence.
 
 Evidence links:
 - [Production verification workflow](https://github.com/Nithesh17122004/carpooling/actions/workflows/production-verification.yml)
-- [PR #3 CI](https://github.com/Nithesh17122004/carpooling/actions/workflows/ci.yml)
+- [CI workflow](https://github.com/Nithesh17122004/carpooling/actions/workflows/ci.yml)
+- [Phone verification PR #5](https://github.com/Nithesh17122004/carpooling/pull/5)
+- [Secret scan workflow](https://github.com/Nithesh17122004/carpooling/actions/workflows/secret-scan.yml)
 
 ## Owner actions — blocking a public launch
 
@@ -37,9 +39,10 @@ Evidence links:
 - [ ] Keep `FIREBASE_AUTH_ENFORCE=false` during staging. After successful end-to-end tests, set `FIREBASE_AUTH_ENFORCE=true` in Render to require Firebase email-link sign-in; confirm the Firebase button is visible before enabling it. Revoke the Resend key previously exposed in chat if it has not already been rotated.
 
 ### 3. Verify phone numbers (separate from email and document review)
-- [ ] Phone verification is not implemented yet: the account model initializes `phone_verified=false`, and there is no phone OTP verification flow. A saved phone number is not proof of ownership.
-- [ ] Choose Firebase Phone Authentication or an SMS OTP provider; implement send-code, verify-code, resend/expiry/rate limits, and server-side verified-claim enforcement before marking `phone_verified=true`.
-- [ ] Test valid, expired, wrong, repeated and rate-limited OTPs; do not ask a human reviewer to approve a phone number based only on a profile field.
+- [x] Implemented Firebase Phone Authentication UI in the profile, including reCAPTCHA, SMS send and six-digit code confirmation. The verified Firebase phone credential is linked to the signed-in Firebase account.
+- [x] Implemented server-side verification: RideMate checks the Firebase ID token, requires the token UID to match the account linked by email sign-in, and only then sets `phone_verified=true`. Changing the profile phone resets verification.
+- [ ] Owner must enable Firebase Phone Authentication and restrict SMS regions in the Firebase console; test numbers/real SMS are not configured or live-tested by this code change.
+- [ ] Test valid, expired, wrong, repeated and rate-limited OTPs in staging, and verify the verified flag cannot be set by editing a profile field.
 
 ### 4. Decide payout operations
 - [ ] Choose **manual payouts** for a tightly controlled initial launch, with dual approval, bank-reference recording, reconciliation and an owner responsible for each payout; OR choose RazorpayX and complete provider onboarding plus signed payout webhook tests.
@@ -65,6 +68,7 @@ Evidence links:
 - [ ] After any config change, redeploy and verify the active deploy and runtime settings without exposing secret values.
 
 ### 6. Public-launch operational and legal sign-off
+- [x] Added a production operations runbook covering release evidence, manual payout controls, KYC review, backup/restore drills, monitoring, incident response, and legal sign-off prerequisites: [docs/operations/PRODUCTION_RUNBOOK.md](docs/operations/PRODUCTION_RUNBOOK.md).
 - [ ] Obtain qualified local legal/insurance review for the actual launch geography and business model: applicable transport/aggregator rules, driver/passenger terms, vehicle insurance, privacy/retention, consumer protection, refunds, grievance handling and safety incident response.
 - [ ] Define support contact and incident escalation, SOS response ownership, fraud/report handling, cancellation/refund policy and a process to suspend unsafe users/drivers.
 - [ ] Run a monitored pilot with real volunteers before public promotion; define launch metrics and stop/rollback criteria.

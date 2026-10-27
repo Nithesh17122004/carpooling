@@ -349,7 +349,10 @@ def update_me():
     if "age" in data:
         updates["age"] = as_int(data.get("age"), "age", minimum=5, maximum=120)
     if "phone" in data:
-        updates["phone"] = valid_phone(data.get("phone"))
+        next_phone = valid_phone(data.get("phone"))
+        updates["phone"] = next_phone
+        if next_phone != (g.user.get("phone") or ""):
+            updates["phone_verified"] = False
     if "gender" in data:
         gender = as_str(data.get("gender"), "gender", max_len=20)
         if gender and gender not in GENDERS:
@@ -364,6 +367,36 @@ def update_me():
     get_db().users.update_one({"_id": g.user["_id"]}, {"$set": updates})
     user = get_db().users.find_one({"_id": g.user["_id"]})
     return {"ok": True, "user": private_user(user)}
+
+
+# -------------------------------------------------------- phone verification
+@bp.post("/phone/verify")
+@require_auth
+@rate_limit("strict")
+def verify_phone_number():
+    """Mark a phone verified only from a Firebase ID token containing its
+    verified phone_number claim, linked to this exact RideMate account."""
+    data = body()
+    require_fields(data, "id_token")
+    raw_token = as_str(data.get("id_token"), "id_token", min_len=20, max_len=12000, required=True)
+    claims = verify_firebase_id_token(raw_token)
+    if not g.user.get("firebase_uid") or claims.get("sub") != g.user.get("firebase_uid"):
+        raise APIError(
+            "Sign in with your linked Firebase email account before verifying a phone.",
+            403, code="firebase_account_mismatch",
+        )
+    verified_phone = valid_phone(claims.get("phone_number"), required=True)
+    if not verified_phone:
+        raise APIError("Complete SMS verification before continuing.", 403,
+                       code="firebase_phone_unverified")
+    now = utcnow()
+    get_db().users.update_one({"_id": g.user["_id"]}, {"$set": {
+        "phone": verified_phone,
+        "phone_verified": True,
+        "updated_at": now,
+    }})
+    fresh = get_db().users.find_one({"_id": g.user["_id"]})
+    return {"ok": True, "user": private_user(fresh)}
 
 
 # -------------------------------------------------------------- password
