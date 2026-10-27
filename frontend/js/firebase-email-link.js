@@ -80,7 +80,7 @@ let _phoneConfirmation = null;
 let _phoneUser = null;
 
 export async function startFirebasePhoneVerification(phone, recaptchaElement) {
-  const cleanPhone = String(phone || '').trim().replace(/[\\s()-]/g, '');
+  const cleanPhone = String(phone || '').trim().replace(/[\s()-]/g, '');
   if (!/^\\+[1-9]\\d{7,14}$/.test(cleanPhone)) {
     throw new Error('Enter your phone in international format, for example +919876543210.');
   }
