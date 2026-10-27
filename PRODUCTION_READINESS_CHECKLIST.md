@@ -36,11 +36,16 @@ Evidence links:
 - [ ] Test send-link, expired/invalid links, verified-email enforcement, existing-account linking, session creation, logout, and link completion on desktop/mobile.
 - [ ] Keep `FIREBASE_AUTH_ENFORCE=false` during staging. After successful end-to-end tests, set `FIREBASE_AUTH_ENFORCE=true` in Render to require Firebase email-link sign-in; confirm the Firebase button is visible before enabling it. Revoke the Resend key previously exposed in chat if it has not already been rotated.
 
-### 3. Decide payout operations
+### 3. Verify phone numbers (separate from email and document review)
+- [ ] Phone verification is not implemented yet: the account model initializes `phone_verified=false`, and there is no phone OTP verification flow. A saved phone number is not proof of ownership.
+- [ ] Choose Firebase Phone Authentication or an SMS OTP provider; implement send-code, verify-code, resend/expiry/rate limits, and server-side verified-claim enforcement before marking `phone_verified=true`.
+- [ ] Test valid, expired, wrong, repeated and rate-limited OTPs; do not ask a human reviewer to approve a phone number based only on a profile field.
+
+### 4. Decide payout operations
 - [ ] Choose **manual payouts** for a tightly controlled initial launch, with dual approval, bank-reference recording, reconciliation and an owner responsible for each payout; OR choose RazorpayX and complete provider onboarding plus signed payout webhook tests.
 - [ ] Do not advertise automated payouts unless the provider integration and its failure/retry/reconciliation paths are tested.
 
-### 4. Manual DL / RC / insurance review and document handling
+### 5. Manual DL / RC / insurance review and document handling
 - [x] Selected approach: human review first; no automatic government-record verification claim.
 - [x] Vehicle KYC submission requires DL number/document and insurance number/document; replacing either document or changing identity details reopens review.
 - [x] RC uses its existing separate encrypted workflow: submit via the vehicle RC form, review in the RC queue, and approve/reject with a reason.
@@ -49,7 +54,7 @@ Evidence links:
 - [ ] Exercise the pending queue with a test vehicle, compare name/number/validity/vehicle class and plate details, approve one packet, reject another, and verify an unreviewed driver cannot publish.
 - [ ] Set a strong `DOCUMENT_ENCRYPTION_KEY` in Render secrets; verify document access controls and retention/deletion policy before real identity documents are uploaded.
 
-### 5. Set up Render staging and production
+### 6. Set up Render staging and production
 - [ ] Create separate staging and production services (or equivalent isolated environments); configure the Docker web service and set the health check path to `/api/ready`.
 - [ ] Provision Redis/Key Value and configure `REDIS_URL`.
 - [ ] Provision managed MongoDB (for example MongoDB Atlas) and configure `MONGO_URI` and `MONGO_DB_NAME`; allow only the necessary network access.
