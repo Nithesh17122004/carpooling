@@ -81,7 +81,7 @@ let _phoneUser = null;
 
 export async function startFirebasePhoneVerification(phone, recaptchaElement) {
   const cleanPhone = String(phone || '').trim().replace(/[\s()-]/g, '');
-  if (!/^\\+[1-9]\\d{7,14}$/.test(cleanPhone)) {
+  if (!/^\+[1-9]\d{7,14}$/.test(cleanPhone)) {
     throw new Error('Enter your phone in international format, for example +919876543210.');
   }
   const { auth, RecaptchaVerifier, linkWithPhoneNumber } = await firebaseAuth();
@@ -100,7 +100,7 @@ export async function startFirebasePhoneVerification(phone, recaptchaElement) {
 
 export async function confirmFirebasePhoneVerification(code) {
   const cleanCode = String(code || '').trim();
-  if (!/^\\d{6}$/.test(cleanCode)) throw new Error('Enter the 6-digit SMS code.');
+  if (!/^\d{6}$/.test(cleanCode)) throw new Error('Enter the 6-digit SMS code.');
   if (!_phoneConfirmation || !_phoneUser) throw new Error('Request an SMS code first.');
   const { PhoneAuthProvider, linkWithCredential } = await firebaseAuth();
   const credential = PhoneAuthProvider.credential(_phoneConfirmation.verificationId, cleanCode);
