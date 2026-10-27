@@ -11,6 +11,7 @@ def _linked_user(db, email="phone-otp@test.in"):
 
 def test_phone_verified_only_after_matching_firebase_phone_claim(client, db, monkeypatch):
     user = _linked_user(db)
+    db.users.update_one({"_id": user["_id"]}, {"$set": {"phone_verified": False}})
     session = login(client, user["email"])
     token = session.get_json()["token"]
     monkeypatch.setattr(
@@ -38,6 +39,7 @@ def test_phone_verified_only_after_matching_firebase_phone_claim(client, db, mon
 
 def test_phone_verification_rejects_different_firebase_uid(client, db, monkeypatch):
     user = _linked_user(db, "phone-mismatch@test.in")
+    db.users.update_one({"_id": user["_id"]}, {"$set": {"phone_verified": False}})
     session = login(client, user["email"])
     token = session.get_json()["token"]
     monkeypatch.setattr(
@@ -63,6 +65,7 @@ def test_phone_verification_rejects_different_firebase_uid(client, db, monkeypat
 
 def test_phone_verification_rejects_token_without_phone_claim(client, db, monkeypatch):
     user = _linked_user(db, "phone-no-claim@test.in")
+    db.users.update_one({"_id": user["_id"]}, {"$set": {"phone_verified": False}})
     session = login(client, user["email"])
     token = session.get_json()["token"]
     monkeypatch.setattr(
