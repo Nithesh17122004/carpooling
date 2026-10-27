@@ -37,9 +37,10 @@ Evidence links:
 - [ ] Keep `FIREBASE_AUTH_ENFORCE=false` during staging. After successful end-to-end tests, set `FIREBASE_AUTH_ENFORCE=true` in Render to require Firebase email-link sign-in; confirm the Firebase button is visible before enabling it. Revoke the Resend key previously exposed in chat if it has not already been rotated.
 
 ### 3. Verify phone numbers (separate from email and document review)
-- [ ] Phone verification is not implemented yet: the account model initializes `phone_verified=false`, and there is no phone OTP verification flow. A saved phone number is not proof of ownership.
-- [ ] Choose Firebase Phone Authentication or an SMS OTP provider; implement send-code, verify-code, resend/expiry/rate limits, and server-side verified-claim enforcement before marking `phone_verified=true`.
-- [ ] Test valid, expired, wrong, repeated and rate-limited OTPs; do not ask a human reviewer to approve a phone number based only on a profile field.
+- [x] Implemented Firebase Phone Authentication UI in the profile, including reCAPTCHA, SMS send and six-digit code confirmation. The verified Firebase phone credential is linked to the signed-in Firebase account.
+- [x] Implemented server-side verification: RideMate checks the Firebase ID token, requires the token UID to match the account linked by email sign-in, and only then sets `phone_verified=true`. Changing the profile phone resets verification.
+- [ ] Owner must enable Firebase Phone Authentication and restrict SMS regions in the Firebase console; test numbers/real SMS are not configured or live-tested by this code change.
+- [ ] Test valid, expired, wrong, repeated and rate-limited OTPs in staging, and verify the verified flag cannot be set by editing a profile field.
 
 ### 4. Decide payout operations
 - [ ] Choose **manual payouts** for a tightly controlled initial launch, with dual approval, bank-reference recording, reconciliation and an owner responsible for each payout; OR choose RazorpayX and complete provider onboarding plus signed payout webhook tests.
