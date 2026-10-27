@@ -694,7 +694,7 @@ def test_upload_path_traversal_names_are_harmless(client, db, driver, rider, veh
     r = _upload(client, driver["auth"], vid, "../../etc/cron.d/vuln.png", _png())
     assert r.status_code == 200, r.get_json()
     vehicle_doc = db.vehicles.find_one({"_id": ObjectId(vid)})["dl_document"]
-    assert vehicle_doc["key"].startswith("docs/dl/")
+    assert vehicle_doc["key"].startswith("private/dl/")
     assert ".." not in vehicle_doc["key"]
 
 
