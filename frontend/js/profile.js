@@ -1,6 +1,7 @@
 /* Profile: avatar, stats, editable details, password change. */
 
 import { Api, store } from './api.js';
+import { isFirebaseEnabled, startFirebasePhoneVerification, confirmFirebasePhoneVerification } from './firebase-email-link.js';
 import {
   icon, h, money, toast, errMsg, skeleton, rating, avatar,
   bindForm, fieldError, confirmDialog,
@@ -84,6 +85,22 @@ export async function renderProfile(root) {
           </form>
         </div>
         <div class="card card--pad">
+          <div class="section-title" style="margin-top:0">Phone verification</div>
+          <p class="text-faint text-sm" id="phoneVerificationStatus">${me.phone_verified ? 'Your phone number is verified.' : 'Verify that you can receive SMS messages on this phone.'}</p>
+          <div class="field">
+            <label for="phoneOtpNumber">Phone number (international format)</label>
+            <input class="input" id="phoneOtpNumber" type="tel" autocomplete="tel" value="${h(me.phone || '')}" placeholder="+919876543210" ${me.phone_verified ? 'disabled' : ''} />
+          </div>
+          <div id="phoneOtpRecaptcha" class="mt-12"></div>
+          <button type="button" class="btn btn-outline btn-block mt-12" id="sendPhoneOtp" ${me.phone_verified ? 'disabled' : ''}>Send SMS code</button>
+          <form id="phoneOtpForm" class="mt-12" hidden>
+            <div class="field"><label for="phoneOtpCode">6-digit SMS code</label>
+              <input class="input" id="phoneOtpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></div>
+            <button type="submit" class="btn btn-primary btn-block">Verify phone</button>
+          </form>
+          <p class="text-faint text-xs mt-12">Requires Firebase Phone Authentication to be enabled for this project. SMS rates and regional restrictions may apply.</p>
+        </div>
+        <div class="card card--pad">
           <div class="section-title" style="margin-top:0">Change password</div>
           <form id="pwForm">
             <div class="flex flex-col gap-12">
@@ -104,6 +121,35 @@ export async function renderProfile(root) {
         </div>
       </div>
     </div>`;
+
+  /* Phone OTP: Firebase sends and verifies the SMS; the backend independently
+     verifies the signed ID token and only then sets phone_verified=true. */
+  const phoneSend = root.querySelector('#sendPhoneOtp');
+  const phoneForm = root.querySelector('#phoneOtpForm');
+  if (phoneSend && !me.phone_verified) {
+    phoneSend.addEventListener('click', async () => {
+      try {
+        if (!(await isFirebaseEnabled())) {
+          throw new Error('Firebase is not configured on this deployment yet.');
+        }
+        const phone = root.querySelector('#phoneOtpNumber').value;
+        await startFirebasePhoneVerification(phone, root.querySelector('#phoneOtpRecaptcha'));
+        phoneForm.hidden = false;
+        phoneSend.disabled = true;
+        phoneSend.textContent = 'SMS code sent';
+        toast('Enter the SMS code sent to your phone.', 'success');
+      } catch (err) { toast(errMsg(err), 'error'); }
+    });
+    bindForm(phoneForm, async (form) => {
+      try {
+        const idToken = await confirmFirebasePhoneVerification(root.querySelector('#phoneOtpCode').value);
+        const res = await Api.verifyPhone({ id_token: idToken });
+        store.user = res.user;
+        toast('Phone number verified successfully.', 'success');
+        renderProfile(root);
+      } catch (err) { toast(errMsg(err), 'error'); }
+    });
+  }
 
   /* Email verification */
   root.querySelector('#sendVerification').addEventListener('click', async () => {
