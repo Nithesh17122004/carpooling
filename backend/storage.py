@@ -148,7 +148,7 @@ def is_public_avatar(filename):
 
 def safe_filename(filename):
     """Return a harmless basename for an HTTP Content-Disposition header."""
-    name = os.path.basename(str(filename or "document").replace("\\\\", "/"))
+    name = os.path.basename(str(filename or "document").replace("\\", "/"))
     # Keep common filename characters only; never allow quotes, controls or
     # path separators to escape the quoted header value.
     name = re.sub(r"[^A-Za-z0-9._-]", "_", name).strip("._")
