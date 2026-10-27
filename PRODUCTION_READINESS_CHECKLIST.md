@@ -8,16 +8,17 @@ This checklist tracks evidence, not intentions. A box is complete only when the 
 
 ## Verified in GitHub Actions
 
-- [ ] Backend tests pass in GitHub Actions against MongoDB 7. The baseline CI run for PR #2 passed, but the current PR #3 run is still pending.
+- [ ] Backend tests pass in GitHub Actions against MongoDB 7, including the phone-verification tests added in PR #5; verify the current run before merge.
 - [x] Production Docker image builds successfully in the production-verification workflow.
 - [x] Chromium browser smoke check passes against the running SPA and API (shell, core assets, API readiness, uncaught JS errors).
-- [ ] Frontend syntax/dependency checks pass on the latest PR #3 head; confirm the current CI run before merge.
+- [ ] Frontend syntax/dependency checks pass on the latest pull-request head; confirm the current CI run before merge.
 - [ ] Firebase email-link flow passes in a configured Firebase project; Firebase Admin verifies ID tokens; signup/login/session linking are tested in staging.
 - [ ] Release artifact is built and scanned for secrets before publication; the repository-history Gitleaks workflow has been added, but its latest run and release-artifact scanning still need evidence.
 
 Evidence links:
 - [Production verification workflow](https://github.com/Nithesh17122004/carpooling/actions/workflows/production-verification.yml)
-- [PR #3 CI](https://github.com/Nithesh17122004/carpooling/actions/workflows/ci.yml)
+- [CI workflow](https://github.com/Nithesh17122004/carpooling/actions/workflows/ci.yml)
+- [Phone verification PR #5](https://github.com/Nithesh17122004/carpooling/pull/5)
 - [Secret scan workflow](https://github.com/Nithesh17122004/carpooling/actions/workflows/secret-scan.yml)
 
 ## Owner actions — blocking a public launch
