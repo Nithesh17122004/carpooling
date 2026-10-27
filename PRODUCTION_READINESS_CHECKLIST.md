@@ -13,11 +13,12 @@ This checklist tracks evidence, not intentions. A box is complete only when the 
 - [x] Chromium browser smoke check passes against the running SPA and API (shell, core assets, API readiness, uncaught JS errors).
 - [ ] Frontend syntax/dependency checks pass on the latest PR #3 head; confirm the current CI run before merge.
 - [ ] Firebase email-link flow passes in a configured Firebase project; Firebase Admin verifies ID tokens; signup/login/session linking are tested in staging.
-- [ ] Release artifact is built and scanned for secrets before publication.
+- [ ] Release artifact is built and scanned for secrets before publication; the repository-history Gitleaks workflow has been added, but its latest run and release-artifact scanning still need evidence.
 
 Evidence links:
 - [Production verification workflow](https://github.com/Nithesh17122004/carpooling/actions/workflows/production-verification.yml)
 - [PR #3 CI](https://github.com/Nithesh17122004/carpooling/actions/workflows/ci.yml)
+- [Secret scan workflow](https://github.com/Nithesh17122004/carpooling/actions/workflows/secret-scan.yml)
 
 ## Owner actions — blocking a public launch
 
@@ -66,6 +67,7 @@ Evidence links:
 - [ ] After any config change, redeploy and verify the active deploy and runtime settings without exposing secret values.
 
 ### 6. Public-launch operational and legal sign-off
+- [x] Added a production operations runbook covering release evidence, manual payout controls, KYC review, backup/restore drills, monitoring, incident response, and legal sign-off prerequisites: [docs/operations/PRODUCTION_RUNBOOK.md](docs/operations/PRODUCTION_RUNBOOK.md).
 - [ ] Obtain qualified local legal/insurance review for the actual launch geography and business model: applicable transport/aggregator rules, driver/passenger terms, vehicle insurance, privacy/retention, consumer protection, refunds, grievance handling and safety incident response.
 - [ ] Define support contact and incident escalation, SOS response ownership, fraud/report handling, cancellation/refund policy and a process to suspend unsafe users/drivers.
 - [ ] Run a monitored pilot with real volunteers before public promotion; define launch metrics and stop/rollback criteria.
