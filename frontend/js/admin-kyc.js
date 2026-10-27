@@ -5,9 +5,9 @@ import { h, toast, errMsg, icon, emptyState } from './ui.js';
 const documentLabels = { dl: 'Driving licence', insurance: 'Insurance', rc: 'Registration certificate (RC)' };
 
 export async function renderAdminKyc(root) {
-  if (!store.user || !['admin', 'support'].includes(store.user.role)) {
+  if (!store.user || store.user.role !== 'admin') {
     root.innerHTML = emptyState({ ic: 'shield', title: 'Reviewer access required',
-      desc: 'Only authorised RideMate review staff can access identity documents.' });
+      desc: 'Only authorised RideMate administrators can access identity documents.' });
     return;
   }
   root.innerHTML = `
