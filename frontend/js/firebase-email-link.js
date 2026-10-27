@@ -75,6 +75,46 @@ export async function sendFirebaseEmailLink(email, profile = {}) {
   return true;
 }
 
+let _phoneRecaptcha = null;
+let _phoneConfirmation = null;
+let _phoneUser = null;
+
+export async function startFirebasePhoneVerification(phone, recaptchaElement) {
+  const cleanPhone = String(phone || '').trim().replace(/[\\s()-]/g, '');
+  if (!/^\\+[1-9]\\d{7,14}$/.test(cleanPhone)) {
+    throw new Error('Enter your phone in international format, for example +919876543210.');
+  }
+  const { auth, RecaptchaVerifier, linkWithPhoneNumber } = await firebaseAuth();
+  if (!auth.currentUser) {
+    throw new Error('First sign in with your linked Firebase email link, then verify your phone.');
+  }
+  if (_phoneRecaptcha) {
+    try { _phoneRecaptcha.clear(); } catch { /* stale widget */ }
+    _phoneRecaptcha = null;
+  }
+  _phoneRecaptcha = new RecaptchaVerifier(auth, recaptchaElement, { size: 'normal' });
+  _phoneUser = auth.currentUser;
+  _phoneConfirmation = await linkWithPhoneNumber(_phoneUser, cleanPhone, _phoneRecaptcha);
+  return true;
+}
+
+export async function confirmFirebasePhoneVerification(code) {
+  const cleanCode = String(code || '').trim();
+  if (!/^\\d{6}$/.test(cleanCode)) throw new Error('Enter the 6-digit SMS code.');
+  if (!_phoneConfirmation || !_phoneUser) throw new Error('Request an SMS code first.');
+  const { PhoneAuthProvider, linkWithCredential } = await firebaseAuth();
+  const credential = PhoneAuthProvider.credential(_phoneConfirmation.verificationId, cleanCode);
+  const linked = await linkWithCredential(_phoneUser, credential);
+  const idToken = await linked.user.getIdToken(true);
+  _phoneConfirmation = null;
+  _phoneUser = null;
+  if (_phoneRecaptcha) {
+    try { _phoneRecaptcha.clear(); } catch { /* noop */ }
+    _phoneRecaptcha = null;
+  }
+  return idToken;
+}
+
 export async function completeFirebaseEmailLink() {
   if (!/[?&]mode=signIn(?:&|$)/.test(window.location.search || '')) return false;
   try {
