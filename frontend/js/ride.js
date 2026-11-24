@@ -76,11 +76,44 @@ export async function renderRide(root, { id }) {
         </div>
 
         <div class="card card--pad">
+          <div class="flex gap-8 flex-wrap mb-12">
+            <button type="button" class="btn btn-outline btn-sm" data-share-ride>${icon('share-2', 15)} Share ride</button>
+            ${isOwner ? `<button type="button" class="btn btn-soft btn-sm" data-open-directions>${icon('navigation', 15)} Navigate to destination</button>` : ''}
+          </div>
           ${isOwner ? driverPanel(ride, root) : riderPanel(ride, canBook, hasDeparted, root)}
         </div>
       </div>
     </div>`;
 
+  const shareBtn = root.querySelector('[data-share-ride]');
+  if (shareBtn) {
+    shareBtn.addEventListener('click', async () => {
+      const url = window.location.origin + window.location.pathname + '#/ride?id=' + encodeURIComponent(id);
+      const text = `RideMate trip: ${ride.origin.label} to ${ride.destination.label} · ${dayLabel(ride.departure_date)} at ${timeLabel(ride.departure_time)}`;
+      try {
+        if (navigator.share) await navigator.share({ title: 'RideMate trip', text, url });
+        else if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(url);
+          toast('Ride link copied. Share it with your passengers.', 'success');
+        } else { window.prompt('Copy this ride link', url); }
+      } catch (err) {
+        if (err?.name !== 'AbortError') toast('Could not share this ride from this browser.', 'error');
+      }
+    });
+  }
+
+  const directionBtn = root.querySelector('[data-open-directions]');
+  if (directionBtn) {
+    directionBtn.addEventListener('click', () => {
+      const destination = ride.destination;
+      const query = destination?.lat != null && destination?.lng != null
+        ? `${destination.lat},${destination.lng}`
+        : destination?.address || destination?.label || '';
+      if (!query) { toast('Destination coordinates are not available.', 'error'); return; }
+      const mapsUrl = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(query);
+      window.open(mapsUrl, '_blank', 'noopener,noreferrer');
+    });
+  }
   const canvas = root.querySelector('#rideMap');
   const map = createMap(canvas);
   if (map) {
