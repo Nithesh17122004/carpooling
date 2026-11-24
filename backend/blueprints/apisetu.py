@@ -27,7 +27,9 @@ def verify_government_documents(vid):
         raise APIError("Vehicle not found.", 404, code="not_found")
 
     payload = request.get_json(silent=True) or {}
-    consent = payload.get("consentArtifact")
+    consent_artifacts = payload.get("consent_artifacts") or {}
+    dl_consent = consent_artifacts.get("dl")
+    rc_consent = consent_artifacts.get("rc")
     uid = str(payload.get("uid") or "").strip()
     full_name = str(payload.get("full_name") or g.user.get("name") or "").strip()
     dob = str(payload.get("date_of_birth") or "").strip()
@@ -38,7 +40,8 @@ def verify_government_documents(vid):
     missing = [name for name, value in (
         ("uid", uid), ("full_name", full_name), ("date_of_birth", dob),
         ("chasis_no", chassis), ("dl_number", dl_number), ("vehicle_number", registration),
-        ("consentArtifact", consent),
+        ("consent_artifacts.dl", dl_consent),
+        ("consent_artifacts.rc", rc_consent),
     ) if not value]
     if missing:
         raise APIError("Required verification details are missing.", 422,
@@ -61,7 +64,8 @@ def verify_government_documents(vid):
     )
     for label, endpoint, params in calls:
         try:
-            results[label] = apisetu.verify_certificate(endpoint, params, consent)
+            results[label] = apisetu.verify_certificate(
+                endpoint, params, dl_consent if label == "dl" else rc_consent)
         except apisetu.APISetuError as exc:
             errors[label] = {"code": exc.code, "message": str(exc)}
 
