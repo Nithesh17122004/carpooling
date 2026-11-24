@@ -83,7 +83,10 @@ def _auth_headers():
     if not key:
         raise APISetuError("apisetu_not_configured",
                           "API Setu credentials are not configured.", 503)
-    header = current_app.config.get("APISETU_AUTH_HEADER", "x-api-key")
+    header = current_app.config.get("APISETU_AUTH_HEADER", "")
+    if not header:
+        raise APISetuError("apisetu_auth_header_missing",
+                          "Configure the authentication header exactly as issued by API Setu.", 503)
     scheme = current_app.config.get("APISETU_AUTH_SCHEME", "")
     token = (scheme + " " + key).strip() if scheme else key
     return {
