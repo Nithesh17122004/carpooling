@@ -149,7 +149,7 @@ class Config:
     APISETU_API_KEY = _env("APISETU_API_KEY", "")
     # Configure these two values exactly as specified in the approved API
     # subscription; the public schema does not define the auth header format.
-    APISETU_AUTH_HEADER = _env("APISETU_AUTH_HEADER", "x-api-key")
+    APISETU_AUTH_HEADER = _env("APISETU_AUTH_HEADER", "")
     APISETU_AUTH_SCHEME = _env("APISETU_AUTH_SCHEME", "")
     APISETU_TIMEOUT_SECONDS = _env_int("APISETU_TIMEOUT_SECONDS", 20)
 
