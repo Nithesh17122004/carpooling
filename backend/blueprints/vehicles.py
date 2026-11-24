@@ -53,7 +53,7 @@ def _normalize(data, partial=False):
         # Indian DLs are commonly displayed with spaces, hyphens or slashes.
         # Normalize separators before validating the canonical 2-letter +
         # 13-digit format, and persist the canonical value consistently.
-        dl_normalized = re.sub(r"[\\s/-]+", "", (dl or "").upper())
+        dl_normalized = re.sub(r"[\s/-]+", "", (dl or "").upper())
         if dl_normalized and not DL_RE.fullmatch(dl_normalized):
             raise APIError(
                 "Enter a valid Indian driving licence number (state code + 13 digits).",
