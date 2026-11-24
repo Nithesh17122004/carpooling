@@ -125,6 +125,64 @@ export async function completeFirebasePhoneLink(idToken) {
   return data.user;
 }
 
+
+/* Offer SMS verification immediately after Firebase email-link sign-in.
+   The API remains the authority: it validates the signed Firebase token,
+   linked UID and verified phone_number claim before setting phone_verified. */
+async function showPhoneVerificationPrompt(phone) {
+  const cleanPhone = String(phone || '').trim();
+  if (!cleanPhone) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'ridemate-phone-verify-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(8,24,31,.62);display:grid;place-items:center;padding:18px;';
+  overlay.innerHTML = `
+    <section role="dialog" aria-modal="true" aria-labelledby="rmPhoneTitle" style="width:min(100%,440px);background:#fff;color:#142c32;border-radius:20px;padding:24px;box-shadow:0 24px 80px rgba(0,0,0,.24)">
+      <h2 id="rmPhoneTitle" style="margin:0 0 8px;font-size:22px">Verify your mobile number</h2>
+      <p style="margin:0 0 16px;color:#5c7076">We will send a one-time SMS code to <strong></strong>. Your number is marked verified only after Firebase and RideMate confirm it.</p>
+      <div id="rmPhoneRecaptcha" style="margin:12px 0"></div>
+      <label for="rmPhoneCode" style="display:block;font-weight:600;margin:12px 0 6px">6-digit SMS code</label>
+      <input id="rmPhoneCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="Enter code" style="width:100%;box-sizing:border-box;padding:13px;border:1px solid #cbd8da;border-radius:10px;font:inherit" />
+      <p id="rmPhoneStatus" aria-live="polite" style="min-height:20px;color:#5c7076;font-size:13px"></p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button type="button" id="rmPhoneSend" style="flex:1;padding:12px;border:0;border-radius:10px;background:#0f8b83;color:white;font-weight:700">Send SMS code</button>
+        <button type="button" id="rmPhoneConfirm" style="flex:1;padding:12px;border:0;border-radius:10px;background:#08766f;color:white;font-weight:700">Verify number</button>
+        <button type="button" id="rmPhoneSkip" style="padding:12px 16px;border:1px solid #d6e0e2;border-radius:10px;background:white;color:#344b50">Later</button>
+      </div>
+    </section>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('strong').textContent = cleanPhone;
+  const status = overlay.querySelector('#rmPhoneStatus');
+  const send = overlay.querySelector('#rmPhoneSend');
+  const confirm = overlay.querySelector('#rmPhoneConfirm');
+  const close = () => { overlay.remove(); };
+  overlay.querySelector('#rmPhoneSkip').addEventListener('click', close);
+  send.addEventListener('click', async () => {
+    send.disabled = true;
+    status.textContent = 'Sending SMS…';
+    try {
+      await startFirebasePhoneVerification(cleanPhone, overlay.querySelector('#rmPhoneRecaptcha'));
+      status.textContent = 'Code sent. Check your SMS messages.';
+    } catch (err) {
+      status.textContent = errMsg(err);
+    } finally { send.disabled = false; }
+  });
+  confirm.addEventListener('click', async () => {
+    confirm.disabled = true;
+    status.textContent = 'Checking verification…';
+    try {
+      const token = await confirmFirebasePhoneVerification(overlay.querySelector('#rmPhoneCode').value);
+      await completeFirebasePhoneLink(token);
+      status.textContent = 'Mobile number verified successfully.';
+      toast('Mobile number verified successfully.', 'success');
+      window.dispatchEvent(new CustomEvent('ridemate:phone-verified'));
+      setTimeout(close, 500);
+    } catch (err) {
+      status.textContent = errMsg(err);
+      confirm.disabled = false;
+    }
+  });
+}
+
 export async function completeFirebaseEmailLink() {
   if (!/[?&]mode=signIn(?:&|$)/.test(window.location.search || '')) return false;
   try {
@@ -149,6 +207,9 @@ export async function completeFirebaseEmailLink() {
     window.location.hash = '#/discover';
     window.dispatchEvent(new CustomEvent('ridemate:authed'));
     toast('You are signed in securely.', 'success');
+    if (session.user?.phone && !session.user?.phone_verified) {
+      await showPhoneVerificationPrompt(session.user.phone);
+    }
     return true;
   } catch (err) {
     toast(errMsg(err), 'error');
