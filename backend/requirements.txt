@@ -23,3 +23,9 @@ tzdata>=2024.1
 
 # Tests
 pytest>=8.0.0
+
+# PostgreSQL migration foundation (staged; Mongo remains active until cutover)
+psycopg[binary]>=3.2,<4
+SQLAlchemy>=2.0,<3
+Flask-SQLAlchemy>=3.1,<4
+Flask-Migrate>=4.0,<5

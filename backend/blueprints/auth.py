@@ -172,6 +172,7 @@ def register():
 
 
 # ------------------------------------------------------------------ login
+
 @bp.post("/login")
 @rate_limit("auth")
 def login():

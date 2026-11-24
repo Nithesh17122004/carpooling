@@ -103,3 +103,9 @@ allowed only one booking per ride (see `backend/db.py:_unique_string_index`).
   app boot (`backend/db.py:create_indexes`).
 - Multiple workers/shared rate limits require `REDIS_URL`; the demo payment
   provider is single-process-safe and for development only.
+## Redesign and migration work
+
+- The premium teal visual system, responsive desktop/tablet/mobile refinements and updated road/car brand mark are on branch `feature/ridemate-redesign-postgres`.
+- See `docs/UI_REDESIGN.md`, `docs/VERIFICATION_AND_AUTH.md`, and `docs/POSTGRESQL_MIGRATION.md` for scope and deployment notes.
+- PostgreSQL packages and `DATABASE_URL` are staged only. The active backend still uses MongoDB/PyMongo until the full domain and worker migration is completed. Do not change production database variables yet.
+- Private KYC files continue to use encrypted private object storage; configure an S3-compatible private bucket for durable, cost-conscious storage. Never save KYC files in PostgreSQL or expose permanent public URLs.
