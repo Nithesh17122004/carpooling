@@ -24,7 +24,7 @@ Set these privately on the RideMate Render web service after the organization ha
 | APISETU_AUTH_SCHEME | Exact scheme/prefix from the approved subscription; blank if none |
 | APISETU_TIMEOUT_SECONDS | 20 |
 
-The public collection schema supplied with the project does not specify the authentication header format. Do not assume x-api-key or Bearer authentication without checking the credentials/consumer documentation issued to RideMate.
+The current API Setu SOP specifies X-APISETU-CLIENTID and X-APISETU-APIKEY headers. If the approved MoRTH subscription issues different authentication instructions, follow those provider-issued instructions.
 
 ## Request body
 
