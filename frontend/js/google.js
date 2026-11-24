@@ -12,6 +12,8 @@ import { openModal, closeOpenModal, toast, errMsg } from './ui.js';
 
 let _clientId = null;
 let _gsi = null;
+let _gsiInitialized = false;
+let _credentialHandler = null;
 
 async function resolveClientId() {
   if (_clientId) return _clientId;
@@ -92,20 +94,28 @@ export async function openGoogleSignIn(mode = 'login') {
 
   try {
     const id = await loadGis();
-    id.initialize({
-      client_id: clientId,
-      callback: async ({ credential }) => {
-        modal.close();
-        try {
-          const data = await Api.google({ credential });
-          // Google sign-in both logs in and creates the account on first use.
-          store.save(data.token, data.user);
-          window.dispatchEvent(new CustomEvent('ridemate:authed'));
-        } catch (err) {
-          toast(errMsg(err), 'error');
-        }
-      },
-    });
+    // Google Identity Services must be initialized only once per page.
+    // Update the callback for the currently opened sign-in modal instead.
+    _credentialHandler = async ({ credential }) => {
+      modal.close();
+      try {
+        const data = await Api.google({ credential });
+        // Google sign-in both logs in and creates the account on first use.
+        store.save(data.token, data.user);
+        window.dispatchEvent(new CustomEvent('ridemate:authed'));
+      } catch (err) {
+        toast(errMsg(err), 'error');
+      }
+    };
+    if (!_gsiInitialized) {
+      id.initialize({
+        client_id: clientId,
+        callback: (response) => {
+          if (_credentialHandler) _credentialHandler(response);
+        },
+      });
+      _gsiInitialized = true;
+    }
     id.renderButton(modal.el.querySelector('#gsiSlot'), {
       type: 'standard', shape: 'rectangular', width: 260, theme: 'outline', text: 'continue_with',
     });
