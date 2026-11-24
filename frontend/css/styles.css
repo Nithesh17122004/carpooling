@@ -762,3 +762,22 @@ img, svg, canvas { max-width: 100%; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Native and custom dropdown behavior across pointer, keyboard and touch */
+.field, .ac { min-width: 0; }
+.select, select {
+  max-width: 100%;
+  color-scheme: light;
+  cursor: pointer;
+}
+.select option, select option { background: #fff; color: #142c32; }
+.ac-list {
+  z-index: 150;
+  max-height: min(320px, 46vh);
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.ac-item { min-height: 44px; }
+@media (max-width: 820px) {
+  .ac-list { max-height: min(280px, 42vh); }
+}
