@@ -30,3 +30,17 @@ Admin review steps:
 The current API continues to record only an administrator's decision; the upload itself does not prove DigiLocker origin. No OCR, filename, QR image alone, user-supplied boolean or client-side status may set a verified state. Ride publishing remains blocked until the existing server-side DL/insurance and RC approval gates are satisfied. This workflow is free to operate with the official DigiLocker app and suitable PDF signature-validation software, but the human review is not an automated government database check.
 
 DigiLocker partner/API integration remains a separate future option and requires onboarding and authorised access. See the official [DigiLocker security architecture](https://www.digilocker.gov.in/web/security-architecture), [implementation model](https://www.digilocker.gov.in/web/implementation-model) and [FAQ on issued vs uploaded documents](https://wb.digilocker.gov.in/web/about/faq).
+
+
+## Server-enforced conditional approval and review evidence
+
+Approving a DL/insurance packet or RC now requires a server-validated review-evidence object. The admin screen prompts the reviewer to attest that they:
+
+- confirmed the file is an issuer-issued DigiLocker document rather than a DigiLocker Drive upload;
+- validated document integrity using either the QR in the official DigiLocker app or a PDF digital signature and certificate chain;
+- matched the holder details and checked validity/expiry; and
+- for an RC, matched the registration number and vehicle details to the RideMate vehicle.
+
+The API rejects approval requests that omit the evidence, select an unsupported integrity method, or omit any required attestation. It stores the reviewer ID, timestamp, method, evidence flags and `automated: false` with the approved document record. A document replacement clears prior evidence. Rejections continue to require a reason.
+
+**Important limitation:** these are server-enforced admin attestations, not cryptographic verification performed by RideMate. The app does not decode DigiLocker QR payloads, call a government service, or validate PDF certificate chains itself. A reviewer must perform those checks out of band before confirming them. The booleans sent by the admin UI are not proof by themselves; the trust boundary is the authenticated admin and the audit trail. Cases where QR/signature verification is unavailable must remain pending or be rejected, not approved as DigiLocker-verified.
