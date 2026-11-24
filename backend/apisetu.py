@@ -79,22 +79,19 @@ def _consent_valid_shape(artifact):
 
 
 def _auth_headers():
-    key = current_app.config.get("APISETU_API_KEY", "")
-    if not key:
-        raise APISetuError("apisetu_not_configured",
-                          "API Setu credentials are not configured.", 503)
-    header = current_app.config.get("APISETU_AUTH_HEADER", "")
-    if not header:
-        raise APISetuError("apisetu_auth_header_missing",
-                          "Configure the authentication header exactly as issued by API Setu.", 503)
-    scheme = current_app.config.get("APISETU_AUTH_SCHEME", "")
-    token = (scheme + " " + key).strip() if scheme else key
+    api_key = current_app.config.get("APISETU_API_KEY", "")
+    client_id = current_app.config.get("APISETU_CLIENT_ID", "")
+    if not api_key or not client_id:
+        raise APISetuError("apisetu_credentials_missing",
+                          "API Setu client ID and API key are required.", 503)
+    # API Setu's current SOP names these two headers. The approved collection
+    # subscription may specify an alternative; follow provider-issued docs if so.
     return {
-        header: token,
+        "X-APISETU-CLIENTID": client_id,
+        "X-APISETU-APIKEY": api_key,
         "Content-Type": "application/json",
         "Accept": "application/xml, application/json",
     }
-
 
 def verify_certificate(kind, parameters, consent_artifact):
     if not current_app.config.get("APISETU_ENABLED", False):
@@ -154,22 +151,31 @@ def verify_certificate(kind, parameters, consent_artifact):
     active = status in ("A", "ACTIVE", "VALID", "ISSUED")
     if kind == "drvlc":
         returned_number = _pick(values, ("dlno", "dlNumber", "licenceNumber", "licenseNumber", "certificateNumber", "number"))
-        returned_name = _pick(values, ("name", "fullName", "holderName"))
+        returned_name = _pick(values, ("holderName", "ownerName", "fullName", "name"))
         returned_dob = _pick(values, ("dob", "dateOfBirth", "birthDate"))
         expected = {
-            "number": bool(returned_number and _norm(returned_number) == _norm(parameters.get("dlno"))),
-            "name": bool(returned_name and _norm(returned_name) == _norm(parameters.get("FullName"))),
-            "dob": bool(returned_dob and _date_norm(returned_dob) == _date_norm(parameters.get("DOB"))),
+            "licence_number": bool(returned_number and _norm(returned_number) == _norm(parameters.get("dlno"))),
         }
+        # Some MoRTH responses expose only the certificate metadata (number,
+        # type and status); the API lookup itself was already constrained by
+        # UID, full name and DOB. If holder fields are present, compare them too.
+        if returned_name:
+            expected["holder_name"] = _norm(returned_name) == _norm(parameters.get("FullName"))
+        if returned_dob:
+            expected["date_of_birth"] = _date_norm(returned_dob) == _date_norm(parameters.get("DOB"))
     else:
         returned_number = _pick(values, ("reg_no", "regNo", "registrationNumber", "vehicleNumber", "certificateNumber", "number"))
         returned_chassis = _pick(values, ("chasis_no", "chassisNo", "chassisNumber", "chasisNumber"))
-        returned_name = _pick(values, ("name", "fullName", "ownerName", "registeredOwner"))
+        returned_name = _pick(values, ("ownerName", "registeredOwner", "fullName", "name"))
         expected = {
             "registration_number": bool(returned_number and _norm(returned_number) == _norm(parameters.get("reg_no"))),
-            "chassis_number": bool(returned_chassis and _norm(returned_chassis) == _norm(parameters.get("chasis_no"))),
-            "owner_name": bool(returned_name and _norm(returned_name) == _norm(parameters.get("FullName"))),
         }
+        # The provider lookup is constrained by chassis number, UID and owner
+        # name. Compare additional returned fields whenever the XML exposes them.
+        if returned_chassis:
+            expected["chassis_number"] = _norm(returned_chassis) == _norm(parameters.get("chasis_no"))
+        if returned_name:
+            expected["owner_name"] = _norm(returned_name) == _norm(parameters.get("FullName"))
 
     matched = active and all(expected.values())
     return {
