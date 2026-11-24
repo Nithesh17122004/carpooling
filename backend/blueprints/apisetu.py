@@ -20,6 +20,9 @@ def verify_government_documents(vid):
     is persisted. Certificate bodies are reduced to match flags and a SHA-256
     digest, never stored in the user/vehicle record.
     """
+    if g.user.get("role") != "driver":
+        raise APIError("Only captain accounts can verify vehicle documents.", 403,
+                       code="driver_role_required")
     vehicle_id = to_object_id(vid, "vehicle")
     db = get_db()
     vehicle = db.vehicles.find_one({"_id": vehicle_id, "user_id": g.user["_id"]})
