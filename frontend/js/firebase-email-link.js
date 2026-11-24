@@ -115,6 +115,16 @@ export async function confirmFirebasePhoneVerification(code) {
   return idToken;
 }
 
+
+/* Complete the provider-backed phone link and send the verified Firebase
+   ID token to the backend. The backend verifies UID + phone claim itself. */
+export async function completeFirebasePhoneLink(idToken) {
+  const data = await Api.verifyPhone({ id_token: idToken });
+  store.save(store.token, data.user);
+  window.dispatchEvent(new CustomEvent('ridemate:authed'));
+  return data.user;
+}
+
 export async function completeFirebaseEmailLink() {
   if (!/[?&]mode=signIn(?:&|$)/.test(window.location.search || '')) return false;
   try {
