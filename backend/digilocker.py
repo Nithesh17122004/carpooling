@@ -4,7 +4,6 @@ This module does NOT validate DigiLocker QR payloads or PDF signatures itself.
 It records an authorised reviewer's explicit attestation after out-of-band
 validation with the official DigiLocker app or a trusted PDF signature tool.
 """
-from flask import current_app
 from .errors import APIError
 from .db import utcnow
 
