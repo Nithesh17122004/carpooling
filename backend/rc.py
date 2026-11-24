@@ -134,7 +134,7 @@ def _mask(value):
     return ("*" * max(len(text) - 4, 0)) + text[-4:]
 
 
-def review_rc(vehicle_id, decision, reviewer_id, reason=None):
+def review_rc(vehicle_id, decision, reviewer_id, reason=None, verification_evidence=None):
     """Admin decision on a pending RC. The only path to `approved`."""
     db = get_db()
     vehicle = db.vehicles.find_one({"_id": vehicle_id})
@@ -159,23 +159,35 @@ def review_rc(vehicle_id, decision, reviewer_id, reason=None):
         raise APIError("A reason is required when rejecting an RC.", 422,
                        code="rc_reason_required")
 
+    evidence = None
+    if target == RC_APPROVED:
+        from .digilocker import build_review_evidence
+        evidence = build_review_evidence(verification_evidence, reviewer_id,
+                                         require_vehicle_match=True)
+
     now = utcnow()
-    db.vehicles.update_one(
+    update = {
+        "rc_document.verification_status": target,
+        "rc_document.reviewed_at": now,
+        "rc_document.reviewed_by": reviewer_id,
+        "rc_document.reason": (str(reason).strip()[:_MAX_REASON] or None)
+        if target == RC_REJECTED else None,
+        "rc_document.digilocker_review": evidence,
+        "updated_at": now,
+    }
+    result = db.vehicles.update_one(
         {"_id": vehicle_id, "rc_document.verification_status": source},
-        {"$set": {
-            "rc_document.verification_status": target,
-            "rc_document.reviewed_at": now,
-            "rc_document.reviewed_by": reviewer_id,
-            "rc_document.reason": (str(reason).strip()[:_MAX_REASON] or None)
-            if target == RC_REJECTED else None,
-            "updated_at": now,
-        }},
+        {"$set": update},
     )
+    if result.modified_count != 1:
+        raise APIError("This RC changed while it was being reviewed. Please refresh.",
+                       409, code="rc_state_conflict")
     from . import audit
 
     audit.record("identity.rc.review", domain=audit.IDENTITY, actor_id=reviewer_id,
                  target_type="vehicle", target_id=vehicle_id,
-                 meta={"to": target, "from": source}, reason=reason)
+                 meta={"to": target, "from": source,
+                       "digilocker_evidence_recorded": bool(evidence)}, reason=reason)
     return db.vehicles.find_one({"_id": vehicle_id})
 
 

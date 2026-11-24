@@ -314,7 +314,8 @@ def review_rc(vid):
                        details={"fields": ["decision"]})
     vehicle_id = to_object_id(vid, "vehicle")
     rc.review_rc(vehicle_id, decision, reviewer_id=g.user["_id"],
-                 reason=payload.get("reason"))
+                 reason=payload.get("reason"),
+                 verification_evidence=payload.get("verification_evidence"))
     fresh = get_db().vehicles.find_one({"_id": vehicle_id})
     return {"ok": True, "rc": rc.admin_rc_view(fresh)}
 

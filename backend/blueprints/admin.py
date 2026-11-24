@@ -565,9 +565,11 @@ def review_vehicle(vid):
     vehicle_id = to_object_id(vid, "vehicle")
     data = body()
     reason = as_str(data.get("reason"), "reason", max_len=300) or None
-    vehicle = _review(vehicle_id, data.get("decision"), str(g.user["_id"]), reason)
+    vehicle = _review(vehicle_id, data.get("decision"), str(g.user["_id"]), reason,
+                      verification_evidence=data.get("verification_evidence"))
     _audit("identity.vehicle.verify", g.user["_id"], "vehicle", vehicle_id,
-           {"to": vehicle.get("verification_status"), "reason": reason})
+           {"to": vehicle.get("verification_status"), "reason": reason,
+            "digilocker_evidence_recorded": bool(vehicle.get("digilocker_dl_review"))})
     return {"ok": True,
             "vehicle": {"id": str(vehicle["_id"]),
                         "verification_status": vehicle.get("verification_status"),

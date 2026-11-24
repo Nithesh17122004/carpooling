@@ -2,7 +2,38 @@
 import { Api, store } from './api.js';
 import { h, toast, errMsg, icon, emptyState } from './ui.js';
 
+
 const documentLabels = { dl: 'Driving licence', insurance: 'Insurance', rc: 'Registration certificate (RC)' };
+
+function collectDigiLockerEvidence(requireVehicleMatch = false) {
+  const method = window.prompt(
+    'How did you validate the DigiLocker-issued document? Enter 1 for QR verified in the official DigiLocker app, or 2 for PDF digital signature/certificate validation.',
+    '1'
+  );
+  if (method === null) return null;
+  const integrityMethod = method.trim() === '1' ? 'digilocker_qr'
+    : method.trim() === '2' ? 'pdf_digital_signature' : '';
+  if (!integrityMethod) {
+    toast('Choose 1 (DigiLocker QR) or 2 (PDF digital signature).', 'error');
+    return null;
+  }
+  const checks = [
+    ['issued_document_confirmed', 'I confirmed this is an issuer-issued DigiLocker document, not a DigiLocker Drive upload.'],
+    ['integrity_verified', 'I validated the QR using the official DigiLocker app OR validated the PDF digital signature and certificate chain.'],
+    ['holder_match', 'The licence/document holder details match the captain and submitted details.'],
+    ['validity_checked', 'I checked the document status, validity and expiry.'],
+  ];
+  if (requireVehicleMatch) {
+    checks.push(['vehicle_match', 'The registration number and vehicle details match the vehicle in RideMate.']);
+  }
+  const evidence = { integrity_method: integrityMethod };
+  for (const [key, label] of checks) {
+    if (!window.confirm(label + '\n\nPress OK only after completing this check. Cancel to keep the case pending.')) return null;
+    evidence[key] = true;
+  }
+  return evidence;
+}
+
 
 export async function renderAdminKyc(root) {
   if (!store.user || store.user.role !== 'admin') {
@@ -12,7 +43,7 @@ export async function renderAdminKyc(root) {
   }
   root.innerHTML = `
     <div class="page-head"><div><div class="eyebrow">Trust & safety</div><h1>Driver document review</h1>
-    <p>Review DL, insurance and RC documents before drivers can publish rides.</p></div>
+    <p>Review DL, insurance and RC documents before drivers can publish rides.</p><p class="text-faint text-sm mt-8">For documents claimed as DigiLocker-issued, open the file and verify its QR using the official DigiLocker app, or validate its issuer digital signature using a trusted signature-validation tool. Do not approve from OCR, appearance, or a captain’s declaration alone. If the QR/signature cannot be validated, keep it in manual review.</p></div>
     <button class="btn btn-outline btn-sm" data-reload>${icon('refresh-cw', 15)} Refresh queues</button></div>
     <section class="mt-16"><div class="section-title">Driving licence and insurance</div><div id="dlQueue" class="flex flex-col gap-12"><div class="skeleton" style="height:120px"></div></div></section>
     <section class="mt-16"><div class="section-title">Registration certificate (RC)</div><div id="rcQueue" class="flex flex-col gap-12"><div class="skeleton" style="height:120px"></div></div></section>`;
@@ -39,9 +70,16 @@ export async function renderAdminKyc(root) {
           toast('A rejection reason is required.', 'error');
           return;
         }
+        const verificationEvidence = decision === 'approve'
+          ? collectDigiLockerEvidence(button.dataset.review === 'rc') : null;
+        if (decision === 'approve' && !verificationEvidence) return;
         button.disabled = true;
         try {
-          const payload = { decision, ...(reason ? { reason } : {}) };
+          const payload = {
+            decision,
+            ...(reason ? { reason } : {}),
+            ...(verificationEvidence ? { verification_evidence: verificationEvidence } : {}),
+          };
           if (button.dataset.review === 'rc') {
             await Api.reviewRc(button.dataset.id, payload);
           } else {
