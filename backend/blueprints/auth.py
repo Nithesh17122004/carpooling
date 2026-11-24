@@ -173,19 +173,6 @@ def register():
 
 # ------------------------------------------------------------------ login
 
-@bp.post("/phone/verification-required")
-@rate_limit("auth")
-def phone_verification_required():
-    """Return the supported phone-verification configuration without trusting client state."""
-    cfg = current_app.config
-    return {
-        "ok": True,
-        "provider": "firebase_phone" if cfg.get("FIREBASE_PHONE_AUTH_ENABLED") else "external",
-        "configured": bool(cfg.get("FIREBASE_PHONE_AUTH_ENABLED") or cfg.get("PHONE_OTP_PROVIDER")),
-        "message": "Phone verification must be completed with the configured OTP provider. Client-side flags are not accepted."
-    }
-
-
 @bp.post("/login")
 @rate_limit("auth")
 def login():
