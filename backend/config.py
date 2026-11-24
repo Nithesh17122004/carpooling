@@ -79,8 +79,11 @@ class Config:
     # X-Forwarded-For headers are IGNORED -- so they cannot bypass rate limits.
     TRUSTED_PROXY_COUNT = _env_int("TRUSTED_PROXY_COUNT", 0)
 
-    # MongoDB. MONGO_URI may itself be a comma-separated candidate list; an
-    # explicit MONGO_URI_FALLBACKS adds further candidates tried in order.
+    # PostgreSQL is the target database for the staged migration. The
+    # application remains on MongoDB until all PyMongo call sites and workers
+    # have been migrated; DATABASE_URL alone does not switch the active adapter.
+    DATABASE_URL = _env("DATABASE_URL", "")
+    # MongoDB remains the live adapter for the current release.
     MONGO_URI = _env("MONGO_URI", None) or _env("MONGODB_URI", "mongodb://localhost:27017")
     MONGO_URI_FALLBACKS = [
         u.strip()
