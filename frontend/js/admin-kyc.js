@@ -2,7 +2,38 @@
 import { Api, store } from './api.js';
 import { h, toast, errMsg, icon, emptyState } from './ui.js';
 
+
 const documentLabels = { dl: 'Driving licence', insurance: 'Insurance', rc: 'Registration certificate (RC)' };
+
+function collectDigiLockerEvidence(requireVehicleMatch = false) {
+  const method = window.prompt(
+    'How did you validate the DigiLocker-issued document? Enter 1 for QR verified in the official DigiLocker app, or 2 for PDF digital signature/certificate validation.',
+    '1'
+  );
+  if (method === null) return null;
+  const integrityMethod = method.trim() === '1' ? 'digilocker_qr'
+    : method.trim() === '2' ? 'pdf_digital_signature' : '';
+  if (!integrityMethod) {
+    toast('Choose 1 (DigiLocker QR) or 2 (PDF digital signature).', 'error');
+    return null;
+  }
+  const checks = [
+    ['issued_document_confirmed', 'I confirmed this is an issuer-issued DigiLocker document, not a DigiLocker Drive upload.'],
+    ['integrity_verified', 'I validated the QR using the official DigiLocker app OR validated the PDF digital signature and certificate chain.'],
+    ['holder_match', 'The licence/document holder details match the captain and submitted details.'],
+    ['validity_checked', 'I checked the document status, validity and expiry.'],
+  ];
+  if (requireVehicleMatch) {
+    checks.push(['vehicle_match', 'The registration number and vehicle details match the vehicle in RideMate.']);
+  }
+  const evidence = { integrity_method: integrityMethod };
+  for (const [key, label] of checks) {
+    if (!window.confirm(label + '\\n\\nPress OK only after completing this check. Cancel to keep the case pending.')) return null;
+    evidence[key] = true;
+  }
+  return evidence;
+}
+
 
 export async function renderAdminKyc(root) {
   if (!store.user || store.user.role !== 'admin') {
@@ -39,9 +70,16 @@ export async function renderAdminKyc(root) {
           toast('A rejection reason is required.', 'error');
           return;
         }
+        const verificationEvidence = decision === 'approve'
+          ? collectDigiLockerEvidence(button.dataset.review === 'rc') : null;
+        if (decision === 'approve' && !verificationEvidence) return;
         button.disabled = true;
         try {
-          const payload = { decision, ...(reason ? { reason } : {}) };
+          const payload = {
+            decision,
+            ...(reason ? { reason } : {}),
+            ...(verificationEvidence ? { verification_evidence: verificationEvidence } : {}),
+          };
           if (button.dataset.review === 'rc') {
             await Api.reviewRc(button.dataset.id, payload);
           } else {
