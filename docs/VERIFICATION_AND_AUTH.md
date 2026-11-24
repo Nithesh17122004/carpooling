@@ -15,3 +15,18 @@ For automated source verification, onboard RideMate as a DigiLocker/API Setu Req
 Until the approved provider is configured, leave records in manual review. Use distinct states: not_submitted, submitted, provider_pending, provider_verified, manual_review, rejected, expired and provider_unavailable.
 
 Never log full DL/RC/Aadhaar identifiers, OTPs, uploaded bytes or provider tokens. Show precise badges such as Phone verified, DL provider verified, RC provider verified or Manually reviewed.
+
+## Free DigiLocker-issued document workflow (no API credentials)
+
+RideMate does not call DigiLocker, API Setu, Parivahan or any third-party verification API in this mode. The captain downloads the DL/RC from the DigiLocker **Issued Documents** section and uploads the document through the existing private upload flow. DigiLocker Drive uploads are not equivalent to documents fetched from an issuer.
+
+Admin review steps:
+1. Confirm the document is represented as an issuer-issued DigiLocker document, not a Drive upload.
+2. Where an encrypted DigiLocker QR is present, scan it with the official DigiLocker mobile app and confirm the returned document details match the uploaded document. If the QR is absent or cannot be verified, do not label the file DigiLocker-verified.
+3. For digitally signed PDFs, validate the signature and certificate chain using a trusted PDF signature-validation tool; check the signing certificate, issuer, integrity and signing status. A visible signature image is not a digital signature.
+4. Compare captain name and DL details, vehicle registration number and RC owner/vehicle details. Check validity/expiry and any mismatch.
+5. Approve only after the checks are complete. Otherwise reject with an actionable reason or leave the case pending manual review.
+
+The current API continues to record only an administrator's decision; the upload itself does not prove DigiLocker origin. No OCR, filename, QR image alone, user-supplied boolean or client-side status may set a verified state. Ride publishing remains blocked until the existing server-side DL/insurance and RC approval gates are satisfied. This workflow is free to operate with the official DigiLocker app and suitable PDF signature-validation software, but the human review is not an automated government database check.
+
+DigiLocker partner/API integration remains a separate future option and requires onboarding and authorised access. See the official [DigiLocker security architecture](https://www.digilocker.gov.in/web/security-architecture), [implementation model](https://www.digilocker.gov.in/web/implementation-model) and [FAQ on issued vs uploaded documents](https://wb.digilocker.gov.in/web/about/faq).
