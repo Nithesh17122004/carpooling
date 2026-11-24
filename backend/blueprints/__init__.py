@@ -2,6 +2,7 @@
 
 from . import (
     admin,
+    apisetu,
     auth,
     bookings,
     geo,
@@ -27,6 +28,7 @@ ALL_BLUEPRINTS = (
     geo.bp,
     notify.bp,
     admin.bp,
+    apisetu.bp,
     realtime.bp,
     ratings.bp,
     safety.bp,
