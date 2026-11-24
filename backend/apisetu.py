@@ -159,7 +159,7 @@ def verify_certificate(kind, parameters, consent_artifact):
         # Some MoRTH responses expose only the certificate metadata (number,
         # type and status); the API lookup itself was already constrained by
         # UID, full name and DOB. If holder fields are present, compare them too.
-        if returned_name:
+        if returned_name and _norm(returned_name) not in ("DRIVINGLICENSE", "DRVLC"):
             expected["holder_name"] = _norm(returned_name) == _norm(parameters.get("FullName"))
         if returned_dob:
             expected["date_of_birth"] = _date_norm(returned_dob) == _date_norm(parameters.get("DOB"))
@@ -174,7 +174,7 @@ def verify_certificate(kind, parameters, consent_artifact):
         # name. Compare additional returned fields whenever the XML exposes them.
         if returned_chassis:
             expected["chassis_number"] = _norm(returned_chassis) == _norm(parameters.get("chasis_no"))
-        if returned_name:
+        if returned_name and _norm(returned_name) not in ("VEHICLEREGISTRATION", "RVCER"):
             expected["owner_name"] = _norm(returned_name) == _norm(parameters.get("FullName"))
 
     matched = active and all(expected.values())
