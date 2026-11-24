@@ -12,7 +12,7 @@ const DEFAULT_SEATS = { '2-wheeler': 1, '4-wheeler': 4, auto: 2, bus: 12 };
 export async function renderVehicles(root) {
   root.innerHTML = `
     <div class="page-head"><div><div class="eyebrow">Ride ready</div><h1>My vehicles</h1>
-    <p>Add once, reuse for every ride you publish.</p></div>
+    <p>Add once, reuse for every ride you publish.</p><p class="text-faint text-sm mt-8">For stronger verification, download your DL and RC from DigiLocker’s <b>Issued Documents</b> section. Files from DigiLocker Drive are user uploads, not issuer-issued records.</p></div>
     <button class="btn btn-primary btn-lg" data-add>${icon('plus', 17)} Add vehicle</button></div>
     <div class="vehicles-grid" id="vhGrid">${skeleton(2)}</div>`;
 
