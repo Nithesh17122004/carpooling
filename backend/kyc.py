@@ -115,7 +115,7 @@ def submit_for_verification(vehicle_id, user_id):
     return db.vehicles.find_one({"_id": vehicle_id})
 
 
-def review_vehicle(vehicle_id, decision, reviewer_id, reason=None):
+def review_vehicle(vehicle_id, decision, reviewer_id, reason=None, verification_evidence=None):
     """Admin decision on a submitted vehicle: `approve` or `reject`."""
     db = get_db()
     vehicle = db.vehicles.find_one({"_id": vehicle_id})
@@ -138,17 +138,34 @@ def review_vehicle(vehicle_id, decision, reviewer_id, reason=None):
             details={"from": kyc_state(vehicle), "to": target})
 
     if target == KYC_REJECTED and not (reason or "").strip():
-        # A rejection the driver cannot act on is a dead end.
         raise APIError("A reason is required when rejecting a vehicle.", 422,
                        code="kyc_reason_required")
 
-    db.vehicles.update_one(
-        {"_id": vehicle_id},
-        {"$set": {"verification_status": target,
-                  "kyc_reviewed_at": utcnow(),
-                  "kyc_reviewed_by": reviewer_id,
-                  "kyc_reason": (reason or None) if target == KYC_REJECTED else None,
-                  "updated_at": utcnow()}})
+    evidence = None
+    if target == KYC_VERIFIED:
+        from .digilocker import build_review_evidence
+        evidence = build_review_evidence(verification_evidence, reviewer_id)
+
+    now = utcnow()
+    update = {
+        "verification_status": target,
+        "kyc_reviewed_at": now,
+        "kyc_reviewed_by": reviewer_id,
+        "kyc_reason": (reason or None) if target == KYC_REJECTED else None,
+        "updated_at": now,
+        "digilocker_dl_review": evidence,
+    }
+    result = db.vehicles.update_one(
+        {"_id": vehicle_id, "verification_status": KYC_SUBMITTED},
+        {"$set": update})
+    if result.modified_count != 1:
+        raise APIError("This vehicle changed while it was being reviewed. Please refresh.",
+                       409, code="kyc_state_conflict")
+    from . import audit
+    audit.record("identity.vehicle.verify", domain=audit.IDENTITY,
+                 actor_id=reviewer_id, target_type="vehicle", target_id=vehicle_id,
+                 meta={"to": target, "digilocker_evidence_recorded": bool(evidence)},
+                 reason=reason)
     return db.vehicles.find_one({"_id": vehicle_id})
 
 
