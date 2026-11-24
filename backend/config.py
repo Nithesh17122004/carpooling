@@ -140,6 +140,19 @@ class Config:
     OSM_USER_AGENT = _env("OSM_USER_AGENT", "ridemate/1.0")
     OUTBOUND_TIMEOUT_SECONDS = _env_int("OUTBOUND_TIMEOUT_SECONDS", 6)
 
+    # API Setu MoRTH transport certificate verification. Disabled until the
+    # organization has an approved API subscription and issued credentials.
+    APISETU_ENABLED = _env_bool("APISETU_ENABLED", False)
+    APISETU_BASE_URL = _env(
+        "APISETU_BASE_URL", "https://apisetu.gov.in/certificate/v3/transport"
+    ).rstrip("/")
+    APISETU_API_KEY = _env("APISETU_API_KEY", "")
+    # Configure these two values exactly as specified in the approved API
+    # subscription; the public schema does not define the auth header format.
+    APISETU_AUTH_HEADER = _env("APISETU_AUTH_HEADER", "x-api-key")
+    APISETU_AUTH_SCHEME = _env("APISETU_AUTH_SCHEME", "")
+    APISETU_TIMEOUT_SECONDS = _env_int("APISETU_TIMEOUT_SECONDS", 20)
+
     # Google OAuth / OIDC
     GOOGLE_CLIENT_ID = _env("GOOGLE_CLIENT_ID", "")
     GOOGLE_CLIENT_SECRET = _env("GOOGLE_CLIENT_SECRET", "")
