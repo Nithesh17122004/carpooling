@@ -186,7 +186,8 @@ def review_rc(vehicle_id, decision, reviewer_id, reason=None, verification_evide
 
     audit.record("identity.rc.review", domain=audit.IDENTITY, actor_id=reviewer_id,
                  target_type="vehicle", target_id=vehicle_id,
-                 meta={"to": target, "from": source}, reason=reason)
+                 meta={"to": target, "from": source,
+                       "digilocker_evidence_recorded": bool(evidence)}, reason=reason)
     return db.vehicles.find_one({"_id": vehicle_id})
 
 
