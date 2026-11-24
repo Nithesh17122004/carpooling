@@ -147,10 +147,7 @@ class Config:
         "APISETU_BASE_URL", "https://apisetu.gov.in/certificate/v3/transport"
     ).rstrip("/")
     APISETU_API_KEY = _env("APISETU_API_KEY", "")
-    # Configure these two values exactly as specified in the approved API
-    # subscription; the public schema does not define the auth header format.
-    APISETU_AUTH_HEADER = _env("APISETU_AUTH_HEADER", "")
-    APISETU_AUTH_SCHEME = _env("APISETU_AUTH_SCHEME", "")
+    APISETU_CLIENT_ID = _env("APISETU_CLIENT_ID", "")
     APISETU_TIMEOUT_SECONDS = _env_int("APISETU_TIMEOUT_SECONDS", 20)
 
     # Google OAuth / OIDC
