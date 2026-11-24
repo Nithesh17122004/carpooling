@@ -179,7 +179,8 @@ def reset_on_document_change(vehicle_id, user_id, doc_field):
                   "kyc_submitted_at": None,
                   "kyc_reviewed_at": None,
                   "kyc_reviewed_by": None,
-                  "kyc_reason": None,\n                  "digilocker_dl_review": None}})
+                  "kyc_reason": None,
+                  "digilocker_dl_review": None}})
 
 
 def assert_can_publish(vehicle):
