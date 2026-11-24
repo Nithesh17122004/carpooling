@@ -2,7 +2,7 @@
 
 import { Api, store } from './api.js';
 import { icon, bindForm, toast, errMsg, fieldError } from './ui.js';
-import { isFirebaseEnabled, isFirebaseEnforced, sendFirebaseEmailLink, startFirebasePhoneVerification, confirmFirebasePhoneVerification, completeFirebasePhoneLink } from './firebase-email-link.js';
+import { isFirebaseEnabled, isFirebaseEnforced, sendFirebaseEmailLink } from './firebase-email-link.js';
 
 function brand(light = true) {
   return `<a class="brand" href="#/login" style="${light ? 'color:#fff' : ''}">
@@ -264,26 +264,8 @@ export function renderAuth(root, path) {
           gender: values.get('gender') || undefined,
         });
         onAuthed(data);
-        const phone = String(values.get('phone') || '').trim();
-        const panel = root.querySelector('#phoneVerifyPanel');
-        if (phone && panel) {
-          panel.hidden = false;
-          root.querySelector('#sendPhoneOtp')?.addEventListener('click', async () => {
-            try {
-              await startFirebasePhoneVerification(phone, root.querySelector('#phoneRecaptcha'));
-              toast('SMS code sent. Enter it to verify your phone.', 'success');
-            } catch (err) { toast(errMsg(err), 'error'); }
-          }, { once: true });
-          root.querySelector('#confirmPhoneOtp')?.addEventListener('click', async () => {
-            const code = root.querySelector('#phoneOtp')?.value || '';
-            try {
-              const token = await confirmFirebasePhoneVerification(code);
-              await completeFirebasePhoneLink(token);
-              toast('Phone number verified successfully.', 'success');
-            } catch (err) { toast(errMsg(err), 'error'); }
-          });
-        } else {
-          toast('Account created. Add a phone number in your profile to verify it.', 'info');
+        if (values.get('phone')) {
+          toast('Account created. Verify your mobile from Profile after linking your verified Firebase email account.', 'info');
         }
       }
     } catch (err) {
