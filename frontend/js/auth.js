@@ -6,7 +6,7 @@ import { isFirebaseEnabled, isFirebaseEnforced, sendFirebaseEmailLink } from './
 
 function brand(light = true) {
   return `<a class="brand" href="#/login" style="${light ? 'color:#fff' : ''}">
-    <span class="brand__mark"><svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M5.2 11.2 6.7 6.8A2 2 0 0 1 8.6 5.4h6.8a2 2 0 0 1 1.9 1.4l1.5 4.4"/><path d="M3.6 11.4h16.8v4.4h-1.9a2 2 0 0 1-4 0H9.5a2 2 0 0 1-4 0H3.6z"/><circle cx="7.4" cy="15.9" r=".9"/><circle cx="16.6" cy="15.9" r=".9"/></svg></span>
+    <span class="brand__mark"><svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.2 6.1 7.8A2.2 2.2 0 0 1 8.2 6h7.6a2.2 2.2 0 0 1 2.1 1.8l2.1 6.4"/><path d="M3 14h18v4H3z"/><circle cx="7" cy="18" r="1.1"/><circle cx="17" cy="18" r="1.1"/><path d="M9 3h6"/></svg></span>
     <span class="brand__name">ride<i style="color:#c7bfff">mate</i></span>
   </a>`;
 }
