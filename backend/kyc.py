@@ -161,11 +161,6 @@ def review_vehicle(vehicle_id, decision, reviewer_id, reason=None, verification_
     if result.modified_count != 1:
         raise APIError("This vehicle changed while it was being reviewed. Please refresh.",
                        409, code="kyc_state_conflict")
-    from . import audit
-    audit.record("identity.vehicle.verify", domain=audit.IDENTITY,
-                 actor_id=reviewer_id, target_type="vehicle", target_id=vehicle_id,
-                 meta={"to": target, "digilocker_evidence_recorded": bool(evidence)},
-                 reason=reason)
     return db.vehicles.find_one({"_id": vehicle_id})
 
 
