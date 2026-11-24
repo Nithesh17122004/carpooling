@@ -28,7 +28,7 @@ function collectDigiLockerEvidence(requireVehicleMatch = false) {
   }
   const evidence = { integrity_method: integrityMethod };
   for (const [key, label] of checks) {
-    if (!window.confirm(label + '\\n\\nPress OK only after completing this check. Cancel to keep the case pending.')) return null;
+    if (!window.confirm(label + '\n\nPress OK only after completing this check. Cancel to keep the case pending.')) return null;
     evidence[key] = true;
   }
   return evidence;
