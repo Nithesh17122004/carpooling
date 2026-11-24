@@ -12,7 +12,7 @@ export async function renderAdminKyc(root) {
   }
   root.innerHTML = `
     <div class="page-head"><div><div class="eyebrow">Trust & safety</div><h1>Driver document review</h1>
-    <p>Review DL, insurance and RC documents before drivers can publish rides.</p></div>
+    <p>Review DL, insurance and RC documents before drivers can publish rides.</p><p class="text-faint text-sm mt-8">For documents claimed as DigiLocker-issued, open the file and verify its QR using the official DigiLocker app, or validate its issuer digital signature using a trusted signature-validation tool. Do not approve from OCR, appearance, or a captain’s declaration alone. If the QR/signature cannot be validated, keep it in manual review.</p></div>
     <button class="btn btn-outline btn-sm" data-reload>${icon('refresh-cw', 15)} Refresh queues</button></div>
     <section class="mt-16"><div class="section-title">Driving licence and insurance</div><div id="dlQueue" class="flex flex-col gap-12"><div class="skeleton" style="height:120px"></div></div></section>
     <section class="mt-16"><div class="section-title">Registration certificate (RC)</div><div id="rcQueue" class="flex flex-col gap-12"><div class="skeleton" style="height:120px"></div></div></section>`;
