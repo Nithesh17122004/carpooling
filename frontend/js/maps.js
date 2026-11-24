@@ -19,6 +19,13 @@ export function createMap(el, { zoom = true } = {}) {
   }).addTo(map);
   map.setView([12.9716, 77.5946], 11);
   if (zoom) L().control.zoom({ position: 'bottomright' }).addTo(map);
+
+  // Leaflet can initialise before the browser has completed the card/grid layout.
+  // Recalculate its dimensions on the next frame so tiles render at the right size.
+  requestAnimationFrame(() => {
+    if (el.isConnected) map.invalidateSize({ pan: false });
+  });
+
   return map;
 }
 
