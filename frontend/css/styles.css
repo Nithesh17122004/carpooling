@@ -781,3 +781,26 @@ img, svg, canvas { max-width: 100%; }
 @media (max-width: 820px) {
   .ac-list { max-height: min(280px, 42vh); }
 }
+
+
+/* ---------- Leaflet + autocomplete layering fixes ---------- */
+/* Keep active location suggestions above Leaflet's map panes and controls. */
+.ac { position: relative; }
+.ac:focus-within { z-index: 1200; }
+.ac-list {
+  z-index: 1300;
+  isolation: isolate;
+}
+/* Keep the map in its own lower stacking layer without clipping suggestions. */
+.map-box { z-index: 0; }
+.map-box .leaflet-container { z-index: 0; }
+/* The global responsive image rule must not resize Leaflet's 256px map tiles. */
+.leaflet-container img,
+.leaflet-tile {
+  max-width: none !important;
+}
+/* Ensure the map canvas always has a measurable drawing area. */
+.map-box .map-canvas {
+  width: 100%;
+  min-width: 0;
+}
