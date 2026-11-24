@@ -2,7 +2,7 @@
 
 import { Api, store } from './api.js';
 import { icon, bindForm, toast, errMsg, fieldError } from './ui.js';
-import { isFirebaseEnabled, isFirebaseEnforced, sendFirebaseEmailLink } from './firebase-email-link.js';
+import { isFirebaseEnabled, isFirebaseEnforced, sendFirebaseEmailLink, startFirebasePhoneVerification, confirmFirebasePhoneVerification, completeFirebasePhoneLink } from './firebase-email-link.js';
 
 function brand(light = true) {
   return `<a class="brand" href="#/login" style="${light ? 'color:#fff' : ''}">
@@ -120,7 +120,8 @@ function signupCard() {
         <div class="grid-2">
           <div class="field">
             <label for="phone">Phone</label>
-            <input class="input" id="phone" name="phone" type="tel" inputmode="tel" placeholder="+91 98xxxxxx" />
+            <input class="input" id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+91 9876543210" />
+            <span class="form-hint">Verify your mobile after creating your account.</span>
           </div>
           <div class="field">
             <label for="age">Age</label>
@@ -145,6 +146,18 @@ function signupCard() {
           <span class="form-hint">At least 8 characters, one letter and one number.</span>
         </div>
         <button type="submit" class="btn btn-primary btn-lg btn-block">Create account</button>
+        <div class="card card--pad mt-12" id="phoneVerifyPanel" hidden>
+          <div class="field">
+            <label for="phoneOtp">Mobile OTP</label>
+            <input class="input" id="phoneOtp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="Enter 6-digit code" />
+          </div>
+          <div id="phoneRecaptcha" class="mt-8"></div>
+          <div class="flex gap-8 mt-8">
+            <button type="button" class="btn btn-outline" id="sendPhoneOtp">Send SMS code</button>
+            <button type="button" class="btn btn-primary" id="confirmPhoneOtp">Verify phone</button>
+          </div>
+          <p class="form-hint mt-8">Your phone is marked verified only after Firebase verifies the SMS code and the server validates its signed token.</p>
+        </div>
       </div>
     </form>
     <div class="auth__or">OR</div>
@@ -251,6 +264,27 @@ export function renderAuth(root, path) {
           gender: values.get('gender') || undefined,
         });
         onAuthed(data);
+        const phone = String(values.get('phone') || '').trim();
+        const panel = root.querySelector('#phoneVerifyPanel');
+        if (phone && panel) {
+          panel.hidden = false;
+          root.querySelector('#sendPhoneOtp')?.addEventListener('click', async () => {
+            try {
+              await startFirebasePhoneVerification(phone, root.querySelector('#phoneRecaptcha'));
+              toast('SMS code sent. Enter it to verify your phone.', 'success');
+            } catch (err) { toast(errMsg(err), 'error'); }
+          }, { once: true });
+          root.querySelector('#confirmPhoneOtp')?.addEventListener('click', async () => {
+            const code = root.querySelector('#phoneOtp')?.value || '';
+            try {
+              const token = await confirmFirebasePhoneVerification(code);
+              await completeFirebasePhoneLink(token);
+              toast('Phone number verified successfully.', 'success');
+            } catch (err) { toast(errMsg(err), 'error'); }
+          });
+        } else {
+          toast('Account created. Add a phone number in your profile to verify it.', 'info');
+        }
       }
     } catch (err) {
       toast(errMsg(err), 'error');
