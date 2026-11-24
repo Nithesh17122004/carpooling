@@ -84,7 +84,16 @@ _SECURITY_HEADERS = {
         "'self' "
         "'unsafe-inline' "
         "https://fonts.googleapis.com "
-        "https://unpkg.com; "
+        "https://unpkg.com "
+        "https://accounts.google.com; "
+
+        # Google Identity Services injects its button stylesheet from this host.
+        "style-src-elem "
+        "'self' "
+        "'unsafe-inline' "
+        "https://fonts.googleapis.com "
+        "https://unpkg.com "
+        "https://accounts.google.com; "
 
         # Fonts
         "font-src "
