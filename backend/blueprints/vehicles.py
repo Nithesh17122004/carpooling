@@ -1,5 +1,7 @@
 """Vehicle management endpoints."""
 
+import re
+
 from flask import Blueprint, g
 from pymongo.errors import DuplicateKeyError
 
@@ -47,11 +49,17 @@ def _normalize(data, partial=False):
     if "vehicle_model" in data:
         fields["vehicle_model"] = as_str(data.get("vehicle_model"), "vehicle_model", max_len=80)
     if "dl_number" in data:
-        dl = as_str(data.get("dl_number"), "dl_number", max_len=20)
-        if dl and not DL_RE.match(dl.upper().replace("-", "")) and not DL_RE.match(dl):
-            raise APIError("Enter a valid driving licence number.", 422, code="validation_error",
-                           details={"fields": ["dl_number"]})
-        fields["dl_number"] = dl or None
+        dl = as_str(data.get("dl_number"), "dl_number", max_len=30)
+        # Indian DLs are commonly displayed with spaces, hyphens or slashes.
+        # Normalize separators before validating the canonical 2-letter +
+        # 13-digit format, and persist the canonical value consistently.
+        dl_normalized = re.sub(r"[\\s/-]+", "", (dl or "").upper())
+        if dl_normalized and not DL_RE.fullmatch(dl_normalized):
+            raise APIError(
+                "Enter a valid Indian driving licence number (state code + 13 digits).",
+                422, code="validation_error", details={"fields": ["dl_number"]},
+            )
+        fields["dl_number"] = dl_normalized or None
     if "insurance_number" in data:
         ins = as_str(data.get("insurance_number"), "insurance_number", max_len=50)
         fields["insurance_number"] = ins or None
